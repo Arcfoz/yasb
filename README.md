@@ -26,28 +26,35 @@
 - Windows 10 & 11
 
 ### Installer
-- Visit the [releases page](https://github.com/amnweb/yasb/releases).
-- Look for the latest release version, which will typically be listed at the top.
-- Under the "Assets" section of the release, you’ll find various files. Click on the installer file to download it.
+- Download the latest installer from the [GitHub releases page](https://github.com/amnweb/yasb/releases/latest).
+- Run the installer and follow the on-screen instructions to complete the installation.
 
 ***
 
 ### Winget
-Install the YASB using winget install
-```
+Install the YASB using Winget install
+```powershell
 winget install --id AmN.yasb
 ```
+
+***
+
+### Scoop
+Install YASB using Scoop:
+```powershell
+scoop bucket add extras
+scoop install extras/yasb
+```
+
 ***
 
 ### Using Python
 - Install Python 3.12
 - Install required Python Modules:
   - `pip install -r requirements.txt`
-  - Create the directory `C:/Users/{username}/.config/yasb/` and copy [styles.css](src/styles.css) and [config.yaml](src/config.yaml) into folder. If you don't have the `.config/yasb/` directory, on first run, the application will create it for you with the default configuration.
-  - Configure [styles.css](src/styles.css) and [config.yaml](src/config.yaml) to your liking.
 - Start the application:
   - run `python src/main.py` in your terminal (or click [yasb.vbs](src/yasb.vbs))
-
+  - Configure [styles.css](src/styles.css) and [config.yaml](src/config.yaml) to your liking.
 
 
 ## Demo YASB
@@ -94,6 +101,7 @@ https://github.com/user-attachments/assets/aab8d8e8-248f-46a1-919c-9b0601236ac1
 - **[Systray](https://github.com/amnweb/yasb/wiki/(Widget)-Systray)**: Displays system tray icons.
 - **[Traffic](https://github.com/amnweb/yasb/wiki/(Widget)-Traffic)**: Displays network traffic information.
 - **[Taskbar](https://github.com/amnweb/yasb/wiki/(Widget)-Taskbar)**: A customizable taskbar for launching applications.
+- **[Pomodoro](https://github.com/amnweb/yasb/wiki/(Widget)-Pomodoro)**: A Pomodoro timer widget.
 - **[Power Menu](https://github.com/amnweb/yasb/wiki/(Widget)-Power-Menu)**: A menu for power options.
 - **[Update Checker](https://github.com/amnweb/yasb/wiki/(Widget)-Update-Check)**: Checks for available updates using Windows Update and Winget.
 - **[Volume](https://github.com/amnweb/yasb/wiki/(Widget)-Volume)**: Shows and controls the system volume.
@@ -102,8 +110,9 @@ https://github.com/user-attachments/assets/aab8d8e8-248f-46a1-919c-9b0601236ac1
 - **[WiFi](https://github.com/amnweb/yasb/wiki/(Widget)-WiFi)**: Shows the current WiFi status.
 - **[WHKD](https://github.com/amnweb/yasb/wiki/(Widget)-Whkd)**: Shows the current hotkey.
 - **[Windows-Desktops](https://github.com/amnweb/yasb/wiki/(Widget)-Windows-Desktops)**: Windows desktops switcher.
-- **[Komorebi Workspaces](https://github.com/amnweb/yasb/wiki/(Widget)-Komorebi-Workspaces)**: Komorebi workspaces widget.
+- **[Komorebi Control](https://github.com/amnweb/yasb/wiki/(Widget)-Komorebi-Control)**: Komorebi control widget.
 - **[Komorebi Layout](https://github.com/amnweb/yasb/wiki/(Widget)-Komorebi-Layout)**: Shows the current layout of Komorebi.
+- **[Komorebi Workspaces](https://github.com/amnweb/yasb/wiki/(Widget)-Komorebi-Workspaces)**: Komorebi workspaces widget.
 
 
 ## 🏆 Contributors

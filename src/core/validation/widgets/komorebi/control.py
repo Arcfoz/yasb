@@ -1,23 +1,20 @@
 DEFAULTS = {
-    'label': "{volume[percent]}%",
-    'label_alt': "{volume[percent]}%",
-    'mute_text': "mute",
-    'tooltip': True,
-    'volume_icons': [
-        "\ueee8",  # Icon for muted
-        "\uf026",  # Icon for 0-10% volume
-        "\uf027",  # Icon for 11-30% volume
-        "\uf027",  # Icon for 31-60% volume
-        "\uf028"   # Icon for 61-100% volume
-    ],
-    'audio_menu': {
+    'label': "\udb80\uddd9",
+    'icons': {
+        'start': "\uead3",
+        'stop': "\uead7",
+        'reload': "\uead2",
+    },
+    'run_ahk': False,
+    'run_whkd': False,
+    'show_version': True,
+    'komorebi_menu': {
         'blur': True,
         'round_corners': True,
         'round_corners_type': 'normal',
         'border_color': 'System',
         'alignment': 'right',
         'direction': 'down',
-        'distance': 6, # deprecated
         'offset_top': 6,
         'offset_left': 0,
     },
@@ -28,9 +25,9 @@ DEFAULTS = {
     },
     'container_padding': {'top': 0, 'left': 0, 'bottom': 0, 'right': 0},
     'callbacks': {
-        'on_left': 'toggle_volume_menu',
+        'on_left': 'toggle_menu',
         'on_middle': 'do_nothing',
-        'on_right': 'toggle_mute'
+        'on_right': 'do_nothing'
     }
 }
 
@@ -39,70 +36,76 @@ VALIDATION_SCHEMA = {
         'type': 'string',
         'default': DEFAULTS['label']
     },
-    'label_alt': {
-        'type': 'string',
-        'default': DEFAULTS['label_alt']
-    },
-    'mute_text': {
-        'type': 'string',
+    'icons': {
+        'type': 'dict',
         'required': False,
-        'default': DEFAULTS['mute_text']
+        'schema': {
+            'start': {
+                'type': 'string',
+                'default': DEFAULTS['icons']['start']
+            },
+            'stop': {
+                'type': 'string',
+                'default': DEFAULTS['icons']['stop']
+            },
+            'reload': {
+                'type': 'string',
+                'default': DEFAULTS['icons']['reload']
+            }
+        },
+        'default': DEFAULTS['icons']
     },
-    'tooltip': {
+    'run_ahk': {
         'type': 'boolean',
-        'required': False,
-        'default': DEFAULTS['tooltip']
+        'default': DEFAULTS['run_ahk']
     },
-    'volume_icons': {
-        'type': 'list',
-        'default': DEFAULTS['volume_icons'],
-        "schema": {
-            'type': 'string',
-            'required': False
-        }
+    'run_whkd': {
+        'type': 'boolean',
+        'default': DEFAULTS['run_whkd']
     },
-    'audio_menu': {
+    'show_version': {
+        'type': 'boolean',
+        'default': DEFAULTS['show_version']
+    },
+    'komorebi_menu': {
         'type': 'dict',
         'required': False,
         'schema': {
             'blur': {
                 'type': 'boolean',
-                'default': DEFAULTS['audio_menu']['blur']
+                'default': DEFAULTS['komorebi_menu']['blur']
             },
             'round_corners': {
                 'type': 'boolean',
-                'default': DEFAULTS['audio_menu']['round_corners']
+                'default': DEFAULTS['komorebi_menu']['round_corners']
             },
             'round_corners_type': {
                 'type': 'string',
-                'default': DEFAULTS['audio_menu']['round_corners_type']
+                'default': DEFAULTS['komorebi_menu']['round_corners_type'],
+                'allowed': ['normal', 'small']
             },
             'border_color': {
                 'type': 'string',
-                'default': DEFAULTS['audio_menu']['border_color']
+                'default': DEFAULTS['komorebi_menu']['border_color']
             },
             'alignment': {
                 'type': 'string',
-                'default': DEFAULTS['audio_menu']['alignment']
+                'default': DEFAULTS['komorebi_menu']['alignment']
             },
             'direction': {
                 'type': 'string',
-                'default': DEFAULTS['audio_menu']['direction']
-            },
-            'distance': {
-                'type': 'integer',
-                'default': DEFAULTS['audio_menu']['distance']
+                'default': DEFAULTS['komorebi_menu']['direction']
             },
             'offset_top': {
                 'type': 'integer',
-                'default': DEFAULTS['audio_menu']['offset_top']
+                'default': DEFAULTS['komorebi_menu']['offset_top']
             },
             'offset_left': {
                 'type': 'integer',
-                'default': DEFAULTS['audio_menu']['offset_left']
+                'default': DEFAULTS['komorebi_menu']['offset_left']
             }
         },
-        'default': DEFAULTS['audio_menu']
+        'default': DEFAULTS['komorebi_menu']
     },
     'animation': {
         'type': 'dict',
@@ -125,26 +128,8 @@ VALIDATION_SCHEMA = {
     },
     'container_padding': {
         'type': 'dict',
-        'required': False,
-        'schema': {
-            'top': {
-                'type': 'integer',
-                'default': DEFAULTS['container_padding']['top']
-            },
-            'left': {
-                'type': 'integer',
-                'default': DEFAULTS['container_padding']['left']
-            },
-            'bottom': {
-                'type': 'integer',
-                'default': DEFAULTS['container_padding']['bottom']
-            },
-            'right': {
-                'type': 'integer',
-                'default': DEFAULTS['container_padding']['right']
-            }
-        },
-        'default': DEFAULTS['container_padding']
+        'default': DEFAULTS['container_padding'],
+        'required': False
     },
     'callbacks': {
         'type': 'dict',
