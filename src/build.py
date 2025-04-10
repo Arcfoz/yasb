@@ -7,6 +7,7 @@ build_options = {
         'core.widgets.yasb.power_menu',
         'core.widgets.yasb.volume',
         'core.widgets.yasb.weather',
+        'core.widgets.yasb.prayer',
         'core.widgets.yasb.memory',
         'core.widgets.yasb.cpu',
         'core.widgets.yasb.libre_monitor',
