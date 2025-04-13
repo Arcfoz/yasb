@@ -23,6 +23,10 @@ VALIDATION_SCHEMA = {
         'type': 'string',
         'default': DEFAULTS['label_alt']
     },
+    'label_shadow': {
+        'type': 'boolean',
+        'default': False
+    },
     'hide_empty': {
         'type': 'boolean',
         'default': False
@@ -138,7 +142,14 @@ VALIDATION_SCHEMA = {
         'min': 0,
         'max': 100
     },
-    
+    'symmetric_corner_radius': {
+        'type': 'boolean',
+        'default': False
+    },
+    'thumbnail_edge_fade': {
+        'type': 'boolean',
+        'default': True
+    },
     'icons': {
         'type': 'dict',
         'schema': {

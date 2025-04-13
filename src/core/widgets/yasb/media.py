@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Optional
 
-from PIL import Image
+from PIL import Image, ImageChops
 from PIL.ImageDraw import ImageDraw
 from PIL.ImageQt import QPixmap
 from PyQt6 import QtCore
@@ -13,7 +13,7 @@ from winsdk.windows.media.control import GlobalSystemMediaTransportControlsSessi
 from core.utils.win32.media import WindowsMedia
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.media import VALIDATION_SCHEMA
-from PyQt6.QtWidgets import QLabel, QGridLayout, QHBoxLayout, QWidget
+from PyQt6.QtWidgets import QLabel, QGridLayout, QHBoxLayout, QWidget, QGraphicsDropShadowEffect
 from core.utils.widgets.animation_manager import AnimationManager
 
 class MediaWidget(BaseWidget):
@@ -27,6 +27,7 @@ class MediaWidget(BaseWidget):
             self,
             label: str,
             label_alt: str,
+            label_shadow: bool,
             hide_empty: bool,
             callbacks: dict[str, str],
             max_field_size: dict[str, int],
@@ -37,6 +38,8 @@ class MediaWidget(BaseWidget):
             thumbnail_alpha: int,
             thumbnail_padding: int,
             thumbnail_corner_radius: int,
+            thumbnail_edge_fade: bool,
+            symmetric_corner_radius: bool,
             icons: dict[str, str],
             animation: dict[str, str],
             container_padding: dict[str, int]
@@ -45,6 +48,7 @@ class MediaWidget(BaseWidget):
         self._label_content = label
         self._label_alt_content = label_alt
 
+        self._label_shadow = label_shadow
         self._max_field_size = max_field_size
         self._show_thumbnail = show_thumbnail
         self._thumbnail_alpha = thumbnail_alpha
@@ -54,6 +58,8 @@ class MediaWidget(BaseWidget):
         self._controls_hide = controls_hide
         self._thumbnail_padding = thumbnail_padding
         self._thumbnail_corner_radius = thumbnail_corner_radius
+        self._thumbnail_edge_fade = thumbnail_edge_fade
+        self._symmetric_corner_radius = symmetric_corner_radius
         self._hide_empty = hide_empty
         self._animation = animation
         self._padding = container_padding
@@ -83,11 +89,24 @@ class MediaWidget(BaseWidget):
 
         self._label = QLabel()
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if self._label_shadow:
+            shadow_effect = QGraphicsDropShadowEffect(self._label)
+            shadow_effect.setOffset(1, 1)
+            shadow_effect.setBlurRadius(3)
+            shadow_effect.setColor(Qt.GlobalColor.black)
+            self._label.setGraphicsEffect(shadow_effect)
+        
         self._label_alt = QLabel()
         self._label_alt.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._thumbnail_label = QLabel()
         self._thumbnail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if self._label_shadow:
+            shadow_effect_alt = QGraphicsDropShadowEffect(self._label_alt)
+            shadow_effect.setOffset(1, 1)
+            shadow_effect.setBlurRadius(3)
+            shadow_effect_alt.setColor(Qt.GlobalColor.black)
+            self._label_alt.setGraphicsEffect(shadow_effect_alt)
 
         self._label.setProperty("class", "label")
         self._label_alt.setProperty("class", "label alt")
@@ -243,17 +262,59 @@ class MediaWidget(BaseWidget):
 
         # If we want a rounded thumbnail, draw a rounded-corner mask and use it to make the image transparent
         if self._thumbnail_corner_radius > 0:
-            corner_mask = Image.new('L', thumbnail.size, color=0)
+            # Create a higher resolution mask for better antialiasing
+            scale_factor = 2  # Increase for better quality, decrease for better performance
+            hr_size = (thumbnail.width * scale_factor, thumbnail.height * scale_factor)
+            hr_radius = self._thumbnail_corner_radius * scale_factor
+            corner_mask = Image.new('L', hr_size, color=0)
             painter = ImageDraw(corner_mask)
 
             # If controls left, make right corners round and vice versa
             corners = (False, True, True, False) if self._controls_left else (True, False, False, True)
-            painter.rounded_rectangle([0, 0, thumbnail.width - 1, thumbnail.height - 1], self._thumbnail_corner_radius,
-                                      self._thumbnail_alpha, None, 0, corners=corners)
+            if self._symmetric_corner_radius:
+                # Make all corners round
+                corners = (True, True, True, True)
+                
+            # Draw at high resolution
+            painter.rounded_rectangle(
+                [0, 0, hr_size[0] - 1, hr_size[1] - 1], 
+                hr_radius,
+                self._thumbnail_alpha, 
+                None, 
+                0, 
+                corners=corners
+            )
+            
+            # Resize the mask down to the original size with antialiasing
+            corner_mask = corner_mask.resize(thumbnail.size, Image.LANCZOS)
+            
+            # Apply the rounded-corner mask
             thumbnail.putalpha(corner_mask)
         else:
             thumbnail.putalpha(self._thumbnail_alpha)
+        if self._thumbnail_edge_fade:
+            fade_width = int(thumbnail.width * 0.2)
+            fade_mask = Image.new('L', thumbnail.size, color=255)
 
+            # Left fade
+            for x in range(fade_width):
+                alpha = int(255 * (x / fade_width))
+                box = (x, 0, x+1, thumbnail.height)
+                line = Image.new('L', (1, thumbnail.height), color=alpha)
+                fade_mask.paste(line, box)
+                
+            # Right fade
+            for x in range(thumbnail.width - fade_width, thumbnail.width):
+                alpha = int(255 * ((thumbnail.width - x) / fade_width))
+                box = (x, 0, x+1, thumbnail.height)
+                line = Image.new('L', (1, thumbnail.height), color=alpha)
+                fade_mask.paste(line, box)
+                
+            # Combine the fade mask with the existing alpha channel
+            current_alpha = thumbnail.split()[-1]
+            new_alpha = ImageChops.multiply(current_alpha, fade_mask)
+            thumbnail.putalpha(new_alpha)
+        
         return thumbnail
 
     def _format_max_field_size(self, text: str):
