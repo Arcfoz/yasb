@@ -3,9 +3,9 @@ import time
 import logging
 import re
 from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget, QVBoxLayout, QPushButton
-from PyQt6.QtCore import Qt, QTimer, QPoint, QRectF, pyqtProperty, QPropertyAnimation
+from PyQt6.QtCore import Qt, QTimer, QRectF, pyqtProperty, QPropertyAnimation
 from PyQt6.QtGui import QCursor, QPainter, QPen, QColor
-from core.utils.utilities import PopupWidget
+from core.utils.utilities import PopupWidget, add_shadow
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.pomodoro import VALIDATION_SCHEMA
 from core.utils.widgets.animation_manager import AnimationManager
@@ -31,7 +31,9 @@ class PomodoroWidget(BaseWidget):
             animation: dict,
             container_padding: dict,
             callbacks: dict,
-            menu: dict
+            menu: dict,
+            label_shadow: dict = None,
+            container_shadow: dict = None
     ):
         super().__init__(class_name="pomodoro-widget")
 
@@ -52,6 +54,8 @@ class PomodoroWidget(BaseWidget):
         self._animation = animation
         self._padding = container_padding
         self._menu_config = menu
+        self._label_shadow = label_shadow
+        self._container_shadow = container_shadow
 
         # Initialize state
         self._is_running = False
@@ -76,6 +80,7 @@ class PomodoroWidget(BaseWidget):
         self._widget_container = QWidget()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
+        add_shadow(self._widget_container, self._container_shadow)
 
         # Add the container to the main widget layout
         self.widget_layout.addWidget(self._widget_container)
@@ -119,6 +124,7 @@ class PomodoroWidget(BaseWidget):
                         "class", "label alt" if is_alt else "label")
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 label.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                add_shadow(label, self._label_shadow)
                 self._widget_container_layout.addWidget(label)
                 widgets.append(label)
                 if is_alt:
@@ -386,9 +392,7 @@ class PomodoroWidget(BaseWidget):
                                    self._menu_config['round_corners_type'], self._menu_config['border_color'])
 
         self._dialog.setProperty("class", "pomodoro-menu")
-        self._dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self._dialog.setWindowFlag(Qt.WindowType.Popup)
-        self._dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+
         # Main layout for the popup
         layout = QVBoxLayout()
         layout.setSpacing(8)
@@ -481,31 +485,12 @@ class PomodoroWidget(BaseWidget):
         self._dialog.setLayout(layout)
 
         self._dialog.adjustSize()
-
-        widget_global_pos = self.mapToGlobal(QPoint(
-            self._menu_config['offset_left'], self.height() + self._menu_config['offset_top']))
-        if self._menu_config['direction'] == 'up':
-            global_y = self.mapToGlobal(QPoint(0, 0)).y(
-            ) - self._dialog.height() - self._menu_config['offset_left']
-            widget_global_pos = QPoint(self.mapToGlobal(
-                QPoint(0, 0)).x() + self._menu_config['offset_left'], global_y)
-
-        if self._menu_config['alignment'] == 'left':
-            global_position = widget_global_pos
-        elif self._menu_config['alignment'] == 'right':
-            global_position = QPoint(
-                widget_global_pos.x() + self.width() - self._dialog.width(),
-                widget_global_pos.y()
-            )
-        elif self._menu_config['alignment'] == 'center':
-            global_position = QPoint(
-                widget_global_pos.x() + (self.width() - self._dialog.width()) // 2,
-                widget_global_pos.y()
-            )
-        else:
-            global_position = widget_global_pos
-
-        self._dialog.move(global_position)
+        self._dialog.setPosition(
+            alignment=self._menu_config['alignment'],
+            direction=self._menu_config['direction'],
+            offset_left=self._menu_config['offset_left'],
+            offset_top=self._menu_config['offset_top']
+        )
         self._dialog.show()
 
     def _format_time(self, seconds):

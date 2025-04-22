@@ -11,13 +11,13 @@ from ctypes.wintypes import BOOL, INT, LPCWSTR, WORD
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.volume import VALIDATION_SCHEMA
 from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget, QVBoxLayout, QSlider, QPushButton
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QWheelEvent
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume, IAudioEndpointVolumeCallback, EDataFlow, IMMDeviceEnumerator
 from pycaw.callbacks import MMNotificationClient
 from core.utils.win32.system_function import KEYEVENTF_KEYUP, VK_VOLUME_UP, VK_VOLUME_DOWN
 from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.utilities import PopupWidget
+from core.utils.utilities import PopupWidget, add_shadow
 # Disable comtypes logging
 logging.getLogger('comtypes').setLevel(logging.CRITICAL)
 
@@ -206,7 +206,9 @@ class VolumeWidget(BaseWidget):
         audio_menu: dict[str, str],
         animation: dict[str, str],
         container_padding: dict[str, int],
-        callbacks: dict[str, str]
+        callbacks: dict[str, str],
+        label_shadow: dict = None,
+        container_shadow: dict = None
     ):
         super().__init__(class_name="volume-widget")
         self._show_alt_label = False
@@ -217,14 +219,19 @@ class VolumeWidget(BaseWidget):
         self._audio_menu = audio_menu
         self._animation = animation
         self._padding = container_padding
+        self._label_shadow = label_shadow
+        self._container_shadow = container_shadow
         self.volume = None
         self._volume_icons = volume_icons
+        
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
         self._widget_container_layout.setContentsMargins(self._padding['left'],self._padding['top'],self._padding['right'],self._padding['bottom'])
         self._widget_container: QWidget = QWidget()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
+        add_shadow(self._widget_container, self._container_shadow)
+
         self.widget_layout.addWidget(self._widget_container)
         self._create_dynamically_label(self._label_content, self._label_alt_content)
 
@@ -346,15 +353,11 @@ class VolumeWidget(BaseWidget):
     def show_volume_menu(self):
         self.dialog = PopupWidget(self, self._audio_menu['blur'], self._audio_menu['round_corners'], self._audio_menu['round_corners_type'], self._audio_menu['border_color'])
         self.dialog.setProperty("class", "audio-menu")
-        self.dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self.dialog.setWindowFlag(Qt.WindowType.Popup)
-        self.dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
 
         # Create vertical layout for the dialog
         layout = QVBoxLayout()
         layout.setSpacing(0)
         layout.setContentsMargins(10, 10, 10, 10)
-
 
         # Create a container widget and layout
         self.container = QWidget()
@@ -362,8 +365,6 @@ class VolumeWidget(BaseWidget):
         self.container_layout = QVBoxLayout()
         self.container_layout.setSpacing(0)
         self.container_layout.setContentsMargins(0, 0, 0, 10)
-
-
 
         self.devices = self._list_audio_devices()
         if len(self.devices) > 1:
@@ -408,27 +409,12 @@ class VolumeWidget(BaseWidget):
 
         # Position the dialog
         self.dialog.adjustSize()
-        widget_global_pos = self.mapToGlobal(QPoint(self._audio_menu['offset_left'], self.height() + self._audio_menu['offset_top']))
-        if self._audio_menu['direction'] == 'up':
-            global_y = self.mapToGlobal(QPoint(0, 0)).y() - self.dialog.height() - self._audio_menu['offset_top']
-            widget_global_pos = QPoint(self.mapToGlobal(QPoint(0, 0)).x() + self._audio_menu['offset_left'], global_y)
-
-        if self._audio_menu['alignment'] == 'left':
-            global_position = widget_global_pos
-        elif self._audio_menu['alignment'] == 'right':
-            global_position = QPoint(
-                widget_global_pos.x() + self.width() - self.dialog.width(),
-                widget_global_pos.y()
-            )
-        elif self._audio_menu['alignment'] == 'center':
-            global_position = QPoint(
-                widget_global_pos.x() + (self.width() - self.dialog.width()) // 2,
-                widget_global_pos.y()
-            )
-        else:
-            global_position = widget_global_pos
-
-        self.dialog.move(global_position)
+        self.dialog.setPosition(
+            alignment=self._audio_menu['alignment'],
+            direction=self._audio_menu['direction'],
+            offset_left=self._audio_menu['offset_left'],
+            offset_top=self._audio_menu['offset_top']
+        )
         self.dialog.show()
 
     def _toggle_label(self):
@@ -460,6 +446,7 @@ class VolumeWidget(BaseWidget):
                     label = QLabel(part)
                     label.setProperty("class", "label")
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                add_shadow(label, self._label_shadow)
                 self._widget_container_layout.addWidget(label)
                 widgets.append(label)
                 if is_alt:

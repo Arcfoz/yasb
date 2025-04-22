@@ -3,7 +3,7 @@ from settings import APP_BAR_TITLE, DEBUG
 from core.utils.win32.windows import WinEvent
 from core.widgets.base import BaseWidget
 from core.event_service import EventService
-from PyQt6.QtCore import pyqtSignal, QTimer, Qt
+from PyQt6.QtCore import pyqtSignal, QTimer, Qt, QElapsedTimer
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget
 from core.validation.widgets.yasb.active_window import VALIDATION_SCHEMA
@@ -12,6 +12,7 @@ from PIL import Image
 import win32gui
 from core.utils.win32.app_icons import get_window_icon
 from core.utils.widgets.animation_manager import AnimationManager
+from core.utils.utilities import add_shadow
 import atexit
 
 IGNORED_TITLES = ['', ' ', 'FolderView', 'Program Manager', 'python3', 'pythonw3', 'YasbBar', 'Search', 'Start']
@@ -25,7 +26,9 @@ IGNORED_YASB_CLASSES = [
     'Qt673QWindowPopupSaveBits',
     'Qt673QWindowPopupDropShadowSaveBits'
 ]
-
+DEBOUNCE_CLASSES = [
+    'OperationStatusWindow'
+]
 try:
     from core.utils.win32.event_listener import SystemEventListener
 except ImportError:
@@ -54,6 +57,8 @@ class ActiveWindowWidget(BaseWidget):
             max_length: int,
             max_length_ellipsis: str,
             container_padding: dict[str, int],
+            label_shadow: dict = None,
+            container_shadow: dict = None,
     ):
         super().__init__(class_name="active-window-widget")
         self.dpi = None
@@ -72,6 +77,8 @@ class ActiveWindowWidget(BaseWidget):
         self._update_retry_count = 0
         self._animation = animation
         self._padding = container_padding
+        self._label_shadow = label_shadow
+        self._container_shadow = container_shadow
          # Construct container
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
@@ -80,20 +87,21 @@ class ActiveWindowWidget(BaseWidget):
         self._widget_container: QWidget = QWidget()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
+        add_shadow(self._widget_container, self._container_shadow)
         # Add the container to the main widget layout
         self.widget_layout.addWidget(self._widget_container)
-        
         
         self._window_title_text = QLabel()
         self._window_title_text.setProperty("class", "label")
         self._window_title_text.setTextFormat(Qt.TextFormat.PlainText)
         self._window_title_text.setText(self._label_no_window)
-       
+        add_shadow(self._window_title_text, self._label_shadow)
+            
         if self._label_icon:
             self._window_icon_label = QLabel()
             self._window_icon_label.setProperty("class", "label icon")
             self._window_icon_label.setText(self._label_no_window)
-
+            add_shadow(self._window_icon_label, self._label_shadow)
         self._ignore_window = ignore_window
         self._ignore_window['classes'] += IGNORED_CLASSES
         self._ignore_window['processes'] += IGNORED_PROCESSES
@@ -125,6 +133,15 @@ class ActiveWindowWidget(BaseWidget):
         self.focus_change_workspaces.connect(self._on_focus_change_workspaces)
         self._event_service.register_event("workspace_update", self.focus_change_workspaces)
         
+        self._window_update_timer = QTimer()
+        self._window_update_timer.setSingleShot(True)
+        self._window_update_timer.timeout.connect(self._process_debounced_update)
+        self._pending_window_update = None
+        self._last_update_time = QElapsedTimer()
+        self._last_update_time.start()
+        
+        self._update_throttle_ms = 250  # Minimum ms between updates for high-frequency classes
+    
         atexit.register(self._stop_events)
 
 
@@ -185,8 +202,33 @@ class ActiveWindowWidget(BaseWidget):
             self._set_no_window_or_hide()
             
     def _on_window_name_change_event(self, hwnd: int, event: WinEvent) -> None:
-        if self._win_info and hwnd == self._win_info["hwnd"]:
-            self._on_focus_change_event(hwnd, event)
+        if not self._win_info or hwnd != self._win_info["hwnd"]:
+            return
+
+        if self._win_info['class_name'] in DEBOUNCE_CLASSES:
+            if self._last_update_time.elapsed() < self._update_throttle_ms:
+                # Store for later processing and return immediately
+                self._pending_window_update = (hwnd, event)
+                # If timer isn't already running, start it
+                if not self._window_update_timer.isActive():
+                    remaining_time = self._update_throttle_ms - self._last_update_time.elapsed()
+                    self._window_update_timer.start(max(50, remaining_time))
+                return
+        
+        # For regular windows, process normally
+        self._process_window_update(hwnd, event)
+        self._last_update_time.restart()
+
+    def _process_debounced_update(self) -> None:
+        """Process the throttled window update"""
+        if self._pending_window_update:
+            hwnd, event = self._pending_window_update
+            self._pending_window_update = None
+            self._process_window_update(hwnd, event)
+            self._last_update_time.restart()
+
+    def _process_window_update(self, hwnd: int, event: WinEvent) -> None:
+        self._on_focus_change_event(hwnd, event)
 
     def _update_window_title(self, hwnd: int, win_info: dict, event: WinEvent) -> None:
         try:

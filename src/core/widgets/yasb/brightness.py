@@ -5,13 +5,13 @@ from settings import DEBUG
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.brightness import VALIDATION_SCHEMA
 from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget, QSlider, QVBoxLayout
-from PyQt6.QtCore import Qt, QTimer, QPoint
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QWheelEvent, QCursor
 from core.utils.win32.utilities import get_monitor_info
 import screen_brightness_control as sbc
 from datetime import datetime
 from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.utilities import PopupWidget
+from core.utils.utilities import PopupWidget, add_shadow
 
 if DEBUG:
     logging.getLogger("screen_brightness_control").setLevel(logging.INFO)
@@ -40,7 +40,9 @@ class BrightnessWidget(BaseWidget):
         auto_light_day_level: int,
         container_padding: dict[str, int],
         animation: dict[str, str],
-        callbacks: dict[str, str]
+        callbacks: dict[str, str],
+        label_shadow: dict = None,
+        container_shadow: dict = None
     ):
         super().__init__(class_name="brightness-widget")
         self._show_alt_label = False
@@ -62,13 +64,16 @@ class BrightnessWidget(BaseWidget):
         self._step = 1
         self._current_mode = None
         self._animation = animation
-        
+        self._label_shadow = label_shadow
+        self._container_shadow = container_shadow
+
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
         self._widget_container_layout.setContentsMargins(self._padding['left'], self._padding['top'], self._padding['right'], self._padding['bottom'])
         self._widget_container: QWidget = QWidget()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
+        add_shadow(self._widget_container, self._container_shadow)
         self.widget_layout.addWidget(self._widget_container)
         self._create_dynamically_label(self._label_content, self._label_alt_content)
         
@@ -158,6 +163,7 @@ class BrightnessWidget(BaseWidget):
                     label.setProperty("class", "label alt" if is_alt else "label")
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 label.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                add_shadow(label, self._label_shadow)
                 self._widget_container_layout.addWidget(label)
                 widgets.append(label)
                 if is_alt:
@@ -211,9 +217,6 @@ class BrightnessWidget(BaseWidget):
     def show_brightness_menu(self):  
         self.dialog = PopupWidget(self, self._brightness_menu['blur'], self._brightness_menu['round_corners'], self._brightness_menu['round_corners_type'], self._brightness_menu['border_color'])
         self.dialog.setProperty("class", "brightness-menu")
-        self.dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self.dialog.setWindowFlag(Qt.WindowType.Popup)
-        self.dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
         
         # Create vertical layout for the dialog
         layout = QVBoxLayout()
@@ -240,31 +243,14 @@ class BrightnessWidget(BaseWidget):
         # Add slider to layout
         layout.addWidget(self.brightness_slider)
         self.dialog.setLayout(layout)
-        
 
-        # Position the dialog 
         self.dialog.adjustSize()
-        widget_global_pos = self.mapToGlobal(QPoint(self._brightness_menu['offset_left'], self.height() + self._brightness_menu['offset_top']))
-        if self._brightness_menu['direction'] == 'up':
-            global_y = self.mapToGlobal(QPoint(0, 0)).y() - self.dialog.height() - self._brightness_menu['offset_top']
-            widget_global_pos = QPoint(self.mapToGlobal(QPoint(0, 0)).x() + self._brightness_menu['offset_left'], global_y)
-
-        if self._brightness_menu['alignment'] == 'left':
-            global_position = widget_global_pos
-        elif self._brightness_menu['alignment'] == 'right':
-            global_position = QPoint(
-                widget_global_pos.x() + self.width() - self.dialog.width(),
-                widget_global_pos.y()
-            )
-        elif self._brightness_menu['alignment'] == 'center':
-            global_position = QPoint(
-                widget_global_pos.x() + (self.width() - self.dialog.width()) // 2,
-                widget_global_pos.y()
-            )
-        else:
-            global_position = widget_global_pos
-        
-        self.dialog.move(global_position)
+        self.dialog.setPosition(
+            alignment=self._brightness_menu['alignment'],
+            direction=self._brightness_menu['direction'],
+            offset_left=self._brightness_menu['offset_left'],
+            offset_top=self._brightness_menu['offset_top']
+        )
         self.dialog.show() 
 
     def _on_slider_value_changed_if_not_dragging(self, value):

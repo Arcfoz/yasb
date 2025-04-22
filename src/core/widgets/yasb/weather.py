@@ -9,11 +9,10 @@ from datetime import datetime
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.weather import VALIDATION_SCHEMA
 from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget, QVBoxLayout
-from PyQt6.QtCore import Qt, QTimer, QPoint
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPixmap
-from core.utils.utilities import PopupWidget
+from core.utils.utilities import PopupWidget, add_shadow
 from core.utils.widgets.animation_manager import AnimationManager
-from settings import DEBUG
 
 class WeatherWidget(BaseWidget):
     validation_schema = VALIDATION_SCHEMA
@@ -32,7 +31,9 @@ class WeatherWidget(BaseWidget):
             callbacks: dict[str, str],
             icons: dict[str, str],
             container_padding: dict[str, int],
-            animation: dict[str, str]
+            animation: dict[str, str],
+            label_shadow: dict = None,
+            container_shadow: dict = None
     ):
         super().__init__((update_interval * 1000), class_name="weather-widget")
         self._label_content = label
@@ -49,6 +50,8 @@ class WeatherWidget(BaseWidget):
         self._units = units
         self._show_alerts = show_alerts
         self._padding = container_padding
+        self._label_shadow = label_shadow
+        self._container_shadow = container_shadow
         # Store weather data
         self.weather_data = None
         self._show_alt_label = False
@@ -65,7 +68,8 @@ class WeatherWidget(BaseWidget):
         self._widget_container: QWidget = QWidget()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
-        
+        add_shadow(self._widget_container, self._container_shadow)
+
         # Add the container to the main widget layout
         self.widget_layout.addWidget(self._widget_container)
         self._create_dynamically_label(self._label_content, self._label_alt_content)
@@ -107,12 +111,7 @@ class WeatherWidget(BaseWidget):
             return
 
         self.dialog = PopupWidget(self, self._weather_card['blur'], self._weather_card['round_corners'], self._weather_card['round_corners_type'], self._weather_card['border_color'])
-    
         self.dialog.setProperty("class", "weather-card")
-        self.dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self.dialog.setWindowFlag(Qt.WindowType.Popup)
-        self.dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
- 
 
         main_layout = QVBoxLayout()
         frame_today = QWidget()
@@ -227,34 +226,15 @@ class WeatherWidget(BaseWidget):
         main_layout.addLayout(days_layout)
 
         self.dialog.setLayout(main_layout)
-        
- 
-        # Position the dialog 
+
         self.dialog.adjustSize()
-        widget_global_pos = self.mapToGlobal(QPoint(self._weather_card['offset_left'], self.height() + self._weather_card['offset_top']))
-        if self._weather_card['direction'] == 'up':
-            global_y = self.mapToGlobal(QPoint(0, 0)).y() - self.dialog.height() - self._weather_card['offset_top']
-            widget_global_pos = QPoint(self.mapToGlobal(QPoint(0, 0)).x() + self._weather_card['offset_left'], global_y)
-
-        if self._weather_card['alignment'] == 'left':
-            global_position = widget_global_pos
-        elif self._weather_card['alignment'] == 'right':
-            global_position = QPoint(
-                widget_global_pos.x() + self.width() - self.dialog.width(),
-                widget_global_pos.y()
-            )
-        elif self._weather_card['alignment'] == 'center':
-            global_position = QPoint(
-                widget_global_pos.x() + (self.width() - self.dialog.width()) // 2,
-                widget_global_pos.y()
-            )
-        else:
-            global_position = widget_global_pos
-        
-        self.dialog.move(global_position)
-        self.dialog.show() 
-        
-
+        self.dialog.setPosition(
+            alignment=self._weather_card['alignment'],
+            direction=self._weather_card['direction'],
+            offset_left=self._weather_card['offset_left'],
+            offset_top=self._weather_card['offset_top']
+        )
+        self.dialog.show()
 
     def _create_dynamically_label(self, content: str, content_alt: str):
         def process_content(content, is_alt=False):
@@ -278,6 +258,7 @@ class WeatherWidget(BaseWidget):
                     label.setText("weather update...")
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 label.setCursor(Qt.CursorShape.PointingHandCursor)
+                add_shadow(label, self._label_shadow)
                 self._widget_container_layout.addWidget(label)
                 widgets.append(label)
                 if is_alt:
@@ -295,8 +276,7 @@ class WeatherWidget(BaseWidget):
         if self.weather_data is None:
             logging.warning("Weather data is not yet available.")
             return
-        # if DEBUG:
-        #     logging.debug(f"Weather data: {self.weather_data}")
+
         active_widgets = self._show_alt_label and self._widgets_alt or self._widgets
         active_label_content = self._show_alt_label and self._label_alt_content or self._label_content
         label_parts = re.split(r'(<span.*?>.*?</span>)', active_label_content)

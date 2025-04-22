@@ -5,12 +5,12 @@ import threading
 import requests
 from settings import DEBUG
 from datetime import datetime
-from core.utils.utilities import PopupWidget
+from core.utils.utilities import PopupWidget, add_shadow
 from core.validation.widgets.yasb.github import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
 from PyQt6.QtGui import QDesktopServices,QCursor
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QScrollArea, QVBoxLayout, QGraphicsOpacityEffect
-from PyQt6.QtCore import Qt, QPoint, QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from core.utils.widgets.animation_manager import AnimationManager
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
@@ -30,7 +30,9 @@ class GithubWidget(BaseWidget):
             icons: dict[str, str],
             update_interval: int,
             animation: dict[str, str],
-            container_padding: dict[str, int]
+            container_padding: dict[str, int],
+            label_shadow: dict = None,
+            container_shadow: dict = None
         ):
         super().__init__((update_interval * 1000), class_name="github-widget")
   
@@ -46,7 +48,9 @@ class GithubWidget(BaseWidget):
         self._max_field_size = max_field_size
         self._animation = animation
         self._padding = container_padding
-        
+        self._label_shadow = label_shadow
+        self._container_shadow = container_shadow
+
         self._github_data = []
         
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
@@ -56,6 +60,7 @@ class GithubWidget(BaseWidget):
         self._widget_container: QWidget = QWidget()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
+        add_shadow(self._widget_container, self._container_shadow)
 
         self.widget_layout.addWidget(self._widget_container)
         self._create_dynamically_label(self._label_content, self._label_alt_content)
@@ -105,12 +110,12 @@ class GithubWidget(BaseWidget):
                     icon = re.sub(r'<span.*?>|</span>', '', part).strip()
                     label = QLabel(icon)
                     label.setProperty("class", class_result)
-                    label.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
                 else:
                     label = QLabel(part)
                     label.setProperty("class", "label")
-                    label.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                label.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)    
+                add_shadow(label, self._label_shadow)
                 self._widget_container_layout.addWidget(label)
                 
                 widgets.append(label)
@@ -208,9 +213,6 @@ class GithubWidget(BaseWidget):
 
         self._menu = PopupWidget(self, self._menu_popup['blur'], self._menu_popup['round_corners'], self._menu_popup['round_corners_type'], self._menu_popup['border_color'])
         self._menu.setProperty('class', 'github-menu')
-        self._menu.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self._menu.setWindowFlag(Qt.WindowType.Popup)
-        self._menu.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
 
         main_layout = QVBoxLayout(self._menu)
         main_layout.setSpacing(0)
@@ -292,7 +294,6 @@ class GithubWidget(BaseWidget):
                 scroll_layout.addWidget(container)
 
                 container.mousePressEvent = self._create_container_mouse_press_event(notification['id'], notification['url'], container)
-                #container.mousePressEvent = self._create_container_mouse_press_event(notification['id'], notification['url'])
         else:
             large_label = QLabel(self._icons['github_logo'])
             large_label.setStyleSheet("font-size:88px;font-weight:400")
@@ -321,28 +322,13 @@ class GithubWidget(BaseWidget):
             main_layout.addWidget(footer_label)
 
         self._menu.adjustSize()
-        widget_global_pos = self.mapToGlobal(QPoint(self._menu_popup['offset_left'], self.height() + self._menu_popup['offset_top']))
+        self._menu.setPosition(
+            alignment=self._menu_popup['alignment'],
+            direction=self._menu_popup['direction'],
+            offset_left=self._menu_popup['offset_left'],
+            offset_top=self._menu_popup['offset_top']
+        )
 
-        if self._menu_popup['direction'] == 'up':
-            global_y = self.mapToGlobal(QPoint(0, 0)).y() - self._menu.height() - self._menu_popup['offset_top']
-            widget_global_pos = QPoint(self.mapToGlobal(QPoint(0, 0)).x() + self._menu_popup['offset_left'], global_y)
-
-        if self._menu_popup['alignment'] == 'left':
-            global_position = widget_global_pos
-        elif self._menu_popup['alignment'] == 'right':
-            global_position = QPoint(
-                widget_global_pos.x() + self.width() - self._menu.width(),
-                widget_global_pos.y()
-            )
-        elif self._menu_popup['alignment'] == 'center':
-            global_position = QPoint(
-                widget_global_pos.x() + (self.width() - self._menu.width()) // 2,
-                widget_global_pos.y()
-            )
-        else:
-            global_position = widget_global_pos
-
-        self._menu.move(global_position)
         self._menu.show()
 
         

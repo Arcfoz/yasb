@@ -34,6 +34,7 @@ from core.utils.systray.win_types import (
     NIF_TIP,
 )
 from core.utils.systray.win_wrappers import IsWindow
+from core.utils.utilities import add_shadow
 from core.validation.widgets.yasb.systray import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
 from settings import DEBUG
@@ -62,12 +63,12 @@ class TrayMonitorThread(QThread):
     @override
     def run(self):
         threading.current_thread().name = "TrayMonitorThread"
-        logger.debug("TrayMonitorThread started")
+        logger.debug("Systray thread is starting...")
         self.client.run()
 
 
 class SystrayWidget(BaseWidget):
-    validation_schema: dict[str, dict[str, str | bool | int]] = VALIDATION_SCHEMA
+    validation_schema: dict[str, Any] = VALIDATION_SCHEMA
     _instance = None
     _thread = None
 
@@ -97,6 +98,11 @@ class SystrayWidget(BaseWidget):
         show_battery: bool,
         show_volume: bool,
         show_network: bool,
+        container_shadow: dict[str, Any],
+        unpinned_shadow: dict[str, Any],
+        pinned_shadow: dict[str, Any],
+        unpinned_vis_btn_shadow: dict[str, Any],
+        btn_shadow: dict[str, Any],
     ):
         super().__init__(class_name=class_name)  # type: ignore
         self.label_collapsed = label_collapsed
@@ -105,6 +111,11 @@ class SystrayWidget(BaseWidget):
         self.icon_size = icon_size
         self.show_unpinned = show_unpinned
         self.show_unpinned_button = show_unpinned_button
+        self.container_shadow = container_shadow
+        self.unpinned_shadow = unpinned_shadow
+        self.pinned_shadow = pinned_shadow
+        self.unpinned_vis_btn_shadow = unpinned_vis_btn_shadow
+        self.btn_shadow = btn_shadow
 
         self.filtered_guids: set[UUID] = set()
         if not show_battery:
@@ -161,6 +172,11 @@ class SystrayWidget(BaseWidget):
         self.pinned_widget.drag_started.connect(self.on_drag_started)  # type: ignore
         self.pinned_widget.drag_ended.connect(self.on_drag_ended)  # type: ignore
 
+        add_shadow(self._widget_frame, self.container_shadow)
+        add_shadow(self.unpinned_widget, self.unpinned_shadow)
+        add_shadow(self.pinned_widget, self.pinned_shadow)
+        add_shadow(self.unpinned_vis_btn, self.unpinned_vis_btn_shadow)
+
         self.widget_layout.addWidget(self.unpinned_widget)
         self.widget_layout.addWidget(self.pinned_widget)
 
@@ -196,8 +212,7 @@ class SystrayWidget(BaseWidget):
 
     def refresh_systray(self):
         """Refresh the icons by sending a message to the tray monitor"""
-        client, _ = SystrayWidget.get_client_instance()
-        client.send_taskbar_created()
+        TrayMonitor.send_taskbar_created()
         logger.debug("Systray icons refreshed")
 
     def setup_client(self):
@@ -213,9 +228,7 @@ class SystrayWidget(BaseWidget):
 
         if thread is not None and not thread.isRunning():
             thread.start()
-
-        # We need to send this message for each instance of the taskbar widget on init
-        QTimer.singleShot(200, client.send_taskbar_created)  # pyright: ignore [reportUnknownMemberType]
+            thread.started.connect(self.on_thread_started)  # type: ignore
 
     @override
     def showEvent(self, a0: QShowEvent | None) -> None:
@@ -224,6 +237,10 @@ class SystrayWidget(BaseWidget):
         self.unpinned_vis_btn.setChecked(self.show_unpinned)
         self.unpinned_vis_btn.setText(self.label_expanded if self.show_unpinned else self.label_collapsed)
         self.unpinned_widget.setVisible(self.show_unpinned or not self.show_unpinned_button)
+
+    def on_thread_started(self):
+        logger.debug("Systray thread started")
+        QTimer.singleShot(200, TrayMonitor.send_taskbar_created)  # pyright: ignore [reportUnknownMemberType]
 
     @pyqtSlot()
     def on_drag_started(self):
@@ -259,6 +276,7 @@ class SystrayWidget(BaseWidget):
                     IconState(index=-1, is_pinned=False),
                 ),
             )
+            add_shadow(icon, self.btn_shadow)
 
             # Place the new icon in the correct layout and index
             icon.is_pinned = saved_data.is_pinned

@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.server_monitor import VALIDATION_SCHEMA
 from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget, QVBoxLayout, QScrollArea, QGraphicsOpacityEffect
-from PyQt6.QtCore import Qt, QPoint, pyqtSignal, QThread, QTimer, QPropertyAnimation, QEasingCurve
-from core.utils.utilities import PopupWidget
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QPropertyAnimation, QEasingCurve
+from core.utils.utilities import PopupWidget, add_shadow
 from core.utils.widgets.animation_manager import AnimationManager
 from win11toast import toast
 urllib3.disable_warnings()
@@ -151,7 +151,9 @@ class ServerMonitor(BaseWidget):
             icons: dict[str, int],
             animation: dict[str, str],
             container_padding: dict[str, int],
-            callbacks: dict[str, str]
+            callbacks: dict[str, str],
+            label_shadow: dict = None,
+            container_shadow: dict = None
     ):
         super().__init__(class_name="server-widget")
         self._show_alt_label = False
@@ -169,7 +171,9 @@ class ServerMonitor(BaseWidget):
         self._padding = container_padding
         self._menu = menu
         self._animation = animation
-        
+        self._label_shadow = label_shadow
+        self._container_shadow = container_shadow
+
         self._last_refresh_time = None
         self._server_status_data = None
         self._first_run = True
@@ -185,6 +189,7 @@ class ServerMonitor(BaseWidget):
         self._widget_container: QWidget = QWidget()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
+        add_shadow(self._widget_container, self._container_shadow)
         # Add the container to the main widget layout
         self.widget_layout.addWidget(self._widget_container)
 
@@ -279,6 +284,7 @@ class ServerMonitor(BaseWidget):
                     label.setProperty("class", "label")
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)  
                 label.setCursor(Qt.CursorShape.PointingHandCursor)
+                add_shadow(label, self._label_shadow)
                 self._widget_container_layout.addWidget(label)
                 widgets.append(label)
                 if is_alt:
@@ -358,9 +364,6 @@ class ServerMonitor(BaseWidget):
     def show_menu(self):  
         self.dialog = PopupWidget(self, self._menu['blur'], self._menu['round_corners'], self._menu['round_corners_type'], self._menu['border_color'])
         self.dialog.setProperty("class", "server-menu")
-        self.dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self.dialog.setWindowFlag(Qt.WindowType.Popup)
-        self.dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
        
         # Get server data list
         server_data_list = self._server_status_data or None
@@ -397,30 +400,14 @@ class ServerMonitor(BaseWidget):
         scroll_area = self._build_server_rows(server_data_list)
         layout.addWidget(scroll_area)
         self.dialog.setLayout(layout)
-        
-        # Position the dialog 
-        self.dialog.adjustSize()
-        widget_global_pos = self.mapToGlobal(QPoint(self._menu['offset_left'], self.height() + self._menu['offset_top']))
-        if self._menu['direction'] == 'up':
-            global_y = self.mapToGlobal(QPoint(0, 0)).y() - self.dialog.height() - self._menu['offset_top']
-            widget_global_pos = QPoint(self.mapToGlobal(QPoint(0, 0)).x() + self._menu['offset_left'], global_y)
 
-        if self._menu['alignment'] == 'left':
-            global_position = widget_global_pos
-        elif self._menu['alignment'] == 'right':
-            global_position = QPoint(
-                widget_global_pos.x() + self.width() - self.dialog.width(),
-                widget_global_pos.y()
-            )
-        elif self._menu['alignment'] == 'center':
-            global_position = QPoint(
-                widget_global_pos.x() + (self.width() - self.dialog.width()) // 2,
-                widget_global_pos.y()
-            )
-        else:
-            global_position = widget_global_pos
-        
-        self.dialog.move(global_position)
+        self.dialog.adjustSize()
+        self.dialog.setPosition(
+            alignment=self._menu['alignment'],
+            direction=self._menu['direction'],
+            offset_left=self._menu['offset_left'],
+            offset_top=self._menu['offset_top']
+        )
         self.dialog.show()        
         
 

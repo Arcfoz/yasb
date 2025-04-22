@@ -3,13 +3,13 @@ import pytz
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.clock import VALIDATION_SCHEMA
 from PyQt6.QtWidgets import QLabel, QHBoxLayout, QVBoxLayout, QWidget, QCalendarWidget, QSizePolicy, QTableView
-from PyQt6.QtCore import Qt, QDate, QPoint, QLocale
+from PyQt6.QtCore import Qt, QDate, QLocale
 from datetime import datetime
 from tzlocal import get_localzone_name
 from itertools import cycle
 from core.utils.widgets.animation_manager import AnimationManager
 import locale
-from core.utils.utilities import PopupWidget
+from core.utils.utilities import PopupWidget, add_shadow
 
 class CustomCalendar(QCalendarWidget):
     def __init__(self, parent=None, timezone=None):
@@ -57,6 +57,8 @@ class ClockWidget(BaseWidget):
             animation: dict[str, str],
             container_padding: dict[str, int],
             callbacks: dict[str, str],
+            label_shadow: dict = None,
+            container_shadow: dict = None,
     ):
         super().__init__(update_interval, class_name="clock-widget")
         self._locale = locale
@@ -71,7 +73,8 @@ class ClockWidget(BaseWidget):
         self._calendar = calendar
         self._padding = container_padding
         self._label_alt_content = label_alt
- 
+        self._label_shadow = label_shadow
+        self._container_shadow = container_shadow
         # Construct container
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
@@ -80,6 +83,7 @@ class ClockWidget(BaseWidget):
         self._widget_container: QWidget = QWidget()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
+        add_shadow(self._widget_container, self._container_shadow)
         # Add the container to the main widget layout
         self.widget_layout.addWidget(self._widget_container)
 
@@ -136,6 +140,7 @@ class ClockWidget(BaseWidget):
                     label.setProperty("class", "label")
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 label.setCursor(Qt.CursorShape.PointingHandCursor)
+                add_shadow(label, self._label_shadow)
                 self._widget_container_layout.addWidget(label)
                 widgets.append(label)
                 if is_alt:
@@ -221,9 +226,6 @@ class ClockWidget(BaseWidget):
         self._yasb_calendar = PopupWidget(self, self._calendar['blur'], self._calendar['round_corners'], 
                             self._calendar['round_corners_type'], self._calendar['border_color'])
         self._yasb_calendar.setProperty('class', 'calendar')
-        self._yasb_calendar.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self._yasb_calendar.setWindowFlag(Qt.WindowType.Popup)
-        self._yasb_calendar.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
 
         # Create main layout
         layout = QHBoxLayout()
@@ -267,32 +269,16 @@ class ClockWidget(BaseWidget):
         self.calendar.setMaximumDate(max_date)
         self.calendar.currentPageChanged.connect(self.update_month_label)
         self.calendar.clicked.connect(self.update_selected_date)
-        
 
         layout.addWidget(self.calendar)
 
-        # Position and show the popup
         self._yasb_calendar.adjustSize()
-        widget_global_pos = self.mapToGlobal(QPoint(self._calendar['offset_left'], self.height() + self._calendar['offset_top']))
-
-        if self._calendar['direction'] == 'up':
-            global_y = self.mapToGlobal(QPoint(0, 0)).y() - self._yasb_calendar.height() - self._calendar['offset_top']
-            widget_global_pos = QPoint(self.mapToGlobal(QPoint(0, 0)).x() + self._calendar['offset_left'], global_y)
-
-        if self._calendar['alignment'] == 'left':
-            global_position = widget_global_pos
-        elif self._calendar['alignment'] == 'right':
-            global_position = QPoint(
-                widget_global_pos.x() + self.width() - self._yasb_calendar.width(),
-                widget_global_pos.y()
-            )
-        elif self._calendar['alignment'] == 'center':
-            global_position = QPoint(
-                widget_global_pos.x() + (self.width() - self._yasb_calendar.width()) // 2,
-                widget_global_pos.y()
-            )
-        else:
-            global_position = widget_global_pos
-
-        self._yasb_calendar.move(global_position)
+        
+        self._yasb_calendar.setPosition(
+            alignment=self._calendar['alignment'],
+            direction=self._calendar['direction'],
+            offset_left=self._calendar['offset_left'],
+            offset_top=self._calendar['offset_top']
+        )
+ 
         self._yasb_calendar.show()
