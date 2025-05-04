@@ -80,7 +80,7 @@ def get_stylesheet_path() -> str:
 
 def parse_env(obj):
     """
-    Recursively expand $env:VARIABLE_NAME patterns in strings,
+    Recursively expand $env:VARIABLE_NAME or $Env:VARIABLE_NAME patterns in strings,
     dicts, and lists.
     """
     if isinstance(obj, dict):
@@ -89,9 +89,10 @@ def parse_env(obj):
         return [parse_env(item) for item in obj]
     elif isinstance(obj, str):
         pattern = r'\$env:([\w_]+)'
-        for var in re.findall(pattern, obj):
-            val = os.environ.get(var, '')
-            obj = obj.replace(f'$env:{var}', val)
+        def repl(match):
+            var = match.group(1)
+            return os.environ.get(var, '')
+        obj = re.sub(pattern, repl, obj, flags=re.IGNORECASE)
     return obj
 
 
@@ -143,16 +144,6 @@ def get_stylesheet(show_error_dialog=False) -> Union[str, None]:
     except OSError:
         logging.error(f"The file '{styles_path}' could not be read. Do you have read/write permissions?")
     return None
-
-def get_resolved_env_file_path(env_file: str) -> str:
-    if path.isabs(env_file):
-        return env_file
-
-    config_path = get_config_path()
-    config_dir = path.dirname(config_path)
-    env_file_path = path.join(config_dir, env_file)
-    
-    return env_file_path
 
 def get_config_and_stylesheet() -> tuple[dict, str]:
     config = get_config()

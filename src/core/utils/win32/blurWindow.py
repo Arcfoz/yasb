@@ -1,4 +1,5 @@
 import ctypes
+import logging
 from ctypes.wintypes import HWND
 user32 = ctypes.windll.user32
 dwm = ctypes.windll.dwmapi
@@ -88,7 +89,7 @@ def set_window_corner_preference(hwnd, preference, border_color):
 
     if border_color == "None":
         border_color_value = ctypes.c_int(DWMWA_COLOR_NONE)
-    elif border_color == "System":
+    elif border_color.lower() == "system":
         border_color_value = ctypes.c_int(DWMWA_COLOR_DEFAULT)
     else:
         border_color_value = ctypes.c_int(HEXtoRGBAint(border_color))
@@ -112,4 +113,4 @@ def Blur(hwnd, Acrylic=False, DarkMode=False, RoundCorners=False, RoundCornersTy
         if RoundCorners:
             set_window_corner_preference(hwnd, DWMWCP_ROUND if RoundCornersType == "normal" else DWMWCP_ROUNDSMALL, BorderColor)
     except Exception as e:
-        print(f"Failed to apply settings: {e}")
+        logging.debug(f"Failed to apply settings: {e}")

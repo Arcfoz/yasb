@@ -7,7 +7,6 @@ import threading
 import webbrowser
 from pathlib import Path
 
-import winshell
 from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtGui import QGuiApplication, QIcon
 from PyQt6.QtWidgets import QMenu, QMessageBox, QSystemTrayIcon
@@ -16,18 +15,17 @@ from core.bar_manager import BarManager
 from core.config import get_config
 from core.console import WindowShellDialog
 from core.utils.controller import exit_application, reload_application
+from core.utils.win32.utilities import create_shortcut
 from settings import (APP_NAME, APP_NAME_FULL, BUILD_VERSION,
                      DEFAULT_CONFIG_DIRECTORY, GITHUB_THEME_URL,
                      GITHUB_URL, SCRIPT_PATH)
 
 OS_STARTUP_FOLDER = os.path.join(os.environ['APPDATA'], r'Microsoft\Windows\Start Menu\Programs\Startup')
 VBS_PATH = os.path.join(SCRIPT_PATH, 'yasb.vbs')
-INSTALLATION_PATH = os.path.abspath(os.path.join(__file__, "../../.."))
-EXE_PATH = os.path.join(INSTALLATION_PATH, 'yasb.exe')
-THEME_EXE_PATH = os.path.join(INSTALLATION_PATH, 'yasb_themes.exe')
+EXE_PATH = os.path.join(SCRIPT_PATH, 'yasb.exe')
+THEME_EXE_PATH = os.path.join(SCRIPT_PATH, 'yasb_themes.exe')
 SHORTCUT_FILENAME = "yasb.lnk"
 AUTOSTART_FILE = EXE_PATH if os.path.exists(EXE_PATH) else VBS_PATH
-WORKING_DIRECTORY = INSTALLATION_PATH if os.path.exists(EXE_PATH) else SCRIPT_PATH
 
 class SystemTrayManager(QSystemTrayIcon):
     def __init__(self, bar_manager: BarManager):
@@ -64,8 +62,7 @@ class SystemTrayManager(QSystemTrayIcon):
             
     def _load_favicon(self):
         # Get the current directory of the script
-        parent_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self._icon.addFile(os.path.join(parent_directory, 'assets', 'images', 'app_icon.png'), QSize(48, 48))
+        self._icon.addFile(os.path.join(SCRIPT_PATH, 'assets', 'images', 'app_icon.png'), QSize(48, 48))
         self.setIcon(self._icon)
         
     def _load_context_menu(self):
@@ -172,14 +169,7 @@ class SystemTrayManager(QSystemTrayIcon):
 
     def _enable_startup(self):
         shortcut_path = os.path.join(OS_STARTUP_FOLDER, SHORTCUT_FILENAME)
-        try:
-            with winshell.shortcut(shortcut_path) as shortcut:
-                shortcut.path = AUTOSTART_FILE
-                shortcut.working_directory = WORKING_DIRECTORY
-                shortcut.description = "Shortcut to yasb.vbs"
-            logging.info(f"Created shortcut at {shortcut_path}")
-        except Exception as e:
-            logging.error(f"Failed to create startup shortcut: {e}")
+        create_shortcut(shortcut_path, AUTOSTART_FILE, SCRIPT_PATH)
         self._load_context_menu()
 
     def _disable_startup(self):
@@ -237,7 +227,7 @@ class SystemTrayManager(QSystemTrayIcon):
     def _show_about_dialog(self):
         about_box = QMessageBox()
         about_box.setWindowTitle("About YASB")
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets', 'images', 'app_icon.png')
+        icon_path = os.path.join(SCRIPT_PATH, 'assets', 'images', 'app_icon.png')
         icon = QIcon(icon_path)
         about_box.setStyleSheet("QLabel#qt_msgboxex_icon_label { margin: 10px 10px 10px 20px; }")
         about_box.setIconPixmap(icon.pixmap(64, 64))
@@ -319,7 +309,7 @@ class SystemTrayManager(QSystemTrayIcon):
         )
         screens_info += system_info
         info_box.setText(screens_info)
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'assets', 'images', 'app_icon.png')
+        icon_path = os.path.join(SCRIPT_PATH, 'assets', 'images', 'app_icon.png')
         icon = QIcon(icon_path)
         info_box.setWindowIcon(icon)
         info_box.setStandardButtons(QMessageBox.StandardButton.Close)

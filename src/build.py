@@ -41,6 +41,7 @@ build_options = {
         'core.widgets.yasb.recycle_bin',
         'core.widgets.komorebi.control',
         'core.widgets.komorebi.active_layout',
+        'core.widgets.komorebi.stack',
         'core.widgets.komorebi.workspaces',
         'core.widgets.glazewm.tiling_direction',
         'core.widgets.glazewm.workspaces'
@@ -51,12 +52,12 @@ build_options = {
     "zip_exclude_packages": ["*"],
     "build_exe": "dist",
     "include_msvcr": True,
-    "includes": ["colorama"],
+    "includes": [],
     "optimize": 1,
     "include_files": [
-            ("assets/images/app_icon.png","lib/assets/images/app_icon.png"),
-            ("assets/images/app_transparent.png","lib/assets/images/app_transparent.png"),
-            ("assets/sound/notification01.wav","lib/assets/sound/notification01.wav"),
+            ("assets/images/app_icon.png","assets/images/app_icon.png"),
+            ("assets/images/app_transparent.png","assets/images/app_transparent.png"),
+            ("assets/sound/notification01.wav","assets/sound/notification01.wav"),
             ("config.yaml","config.yaml"),
             ("styles.css","styles.css")
         ]
@@ -111,7 +112,7 @@ executables = [
         target_name="yasb_themes",
     ),
     Executable(
-        "core/utils/cli.py",
+        "cli.py",
         base="Console",
         copyright=f"Copyright (C) {datetime.datetime.now().year} AmN",
         target_name="yasbc",

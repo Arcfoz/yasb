@@ -1,14 +1,24 @@
 import platform
 import re
-from typing import Any
-from PyQt6.QtWidgets import QApplication, QWidget, QFrame, QMenu, QGraphicsDropShadowEffect
-from PyQt6.QtCore import QEvent, QObject, QPoint, Qt
-from PyQt6.QtGui import QScreen, QColor
+from typing import Any, cast
+
+import psutil
+from PyQt6.QtCore import QEvent, QPoint, Qt
+from PyQt6.QtGui import QColor, QScreen
+from PyQt6.QtWidgets import QApplication, QFrame, QGraphicsDropShadowEffect, QWidget
+
 from core.utils.win32.blurWindow import Blur
+
 
 def is_windows_10() -> bool:
     version = platform.version()
     return bool(re.match(r'^10\.0\.1\d{4}$', version))
+
+def is_process_running(process_name: str) -> bool:
+    for proc in psutil.process_iter(["name"]):
+        if proc.info["name"] == process_name:
+            return True
+    return False
 
 def percent_to_float(percent: str) -> float:
     return float(percent.strip('%')) / 100.0
@@ -99,7 +109,7 @@ class PopupWidget(QWidget):
             offset_left (int): Horizontal offset in pixels
             offset_top (int): Vertical offset in pixels
         """
-        parent = self.parent()
+        parent = cast(QWidget, self.parent()) # parent should be a QWidget
         if not parent:
             return
 
@@ -124,7 +134,23 @@ class PopupWidget(QWidget):
         else:
             global_position = widget_global_pos
 
+        # Determine screen where the parent is
+        screen = QApplication.screenAt(parent.mapToGlobal(parent.rect().center()))
+        if screen:
+            available_geometry = screen.availableGeometry()
+            # Ensure the popup fits horizontally
+            x = max(available_geometry.left(), min(global_position.x(), available_geometry.right() - self.width()))
+            # Ensure the popup fits vertically
+            y = max(available_geometry.top(), min(global_position.y(), available_geometry.bottom() - self.height()))
+            global_position = QPoint(x, y)
         self.move(global_position)
+
+    def _add_separator(self, layout):
+        separator = QFrame(self)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setProperty('class', 'separator')
+        separator.setStyleSheet('border:none')
+        layout.addWidget(separator)
 
     def showEvent(self, event):
         if self._blur:
@@ -155,39 +181,6 @@ class PopupWidget(QWidget):
     def resizeEvent(self, event):
         self._popup_content.setGeometry(0, 0, self.width(), self.height())
         super().resizeEvent(event)
-
-class ContextMenu(QMenu):
-    """A custom context menu class that extends QMenu with additional functionality.
-    This class implements a context menu that automatically closes when clicking outside
-    its boundaries and provides proper window activation handling.
-    Methods:
-        showEvent(event): Handles the menu show event by activating the window
-        hideEvent(event): Handles the menu hide event by removing the event filter
-        eventFilter(obj, event): Filters events to detect clicks outside the menu
-    Inherits:
-        QMenu: Base menu class from Qt
-    """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        QApplication.instance().installEventFilter(self)
-
-    def showEvent(self, event):
-        self.activateWindow() 
-        super().showEvent(event)
-
-    def hideEvent(self, event):
-        QApplication.instance().removeEventFilter(self)
-        super().hideEvent(event)
-
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.MouseButtonPress:
-            global_pos = event.globalPosition().toPoint()
-            if not self.geometry().contains(global_pos):
-                self.hide()
-                self.deleteLater()
-                return True
-        return super().eventFilter(obj, event)
-    
 
 class Singleton(type):
     _instances = {}
