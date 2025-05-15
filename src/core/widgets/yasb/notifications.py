@@ -1,14 +1,14 @@
 import logging
 import re
 from PyQt6.QtWidgets import QWidget, QLabel, QHBoxLayout
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 from core.event_service import EventService
 from core.utils.widgets.windows_notification import WindowsNotificationEventListener
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.notifications import VALIDATION_SCHEMA
 from core.utils.widgets.animation_manager import AnimationManager
 from core.utils.win32.system_function import notification_center, quick_settings
-from core.utils.utilities import is_windows_10, add_shadow
+from core.utils.utilities import is_windows_10, add_shadow, build_widget_label
 try:
     from core.utils.widgets.windows_notification import WindowsNotificationEventListener
 except ImportError:
@@ -58,7 +58,7 @@ class NotificationsWidget(BaseWidget):
         # Add the container to the main widget layout
         self.widget_layout.addWidget(self._widget_container)
 
-        self._create_dynamically_label(self._label_content, self._label_alt_content)
+        build_widget_label(self, self._label_content, self._label_alt_content, self._label_shadow)
 
         self.callback_left = callbacks['on_left']
         self.callback_right = callbacks['on_right']
@@ -78,7 +78,11 @@ class NotificationsWidget(BaseWidget):
 
     def _on_windows_notification_update(self, total_notifications):
         self._notification_count = total_notifications
-        self._update_label() 
+        if total_notifications > 0:
+            self.setVisible(True)
+        elif self._hide_empty:
+            self.setVisible(False)
+        self._update_label()
 
 
     def _toggle_notification(self):
@@ -101,45 +105,11 @@ class NotificationsWidget(BaseWidget):
         self._update_label()
             
 
-    def _create_dynamically_label(self, content: str, content_alt: str):
-        def process_content(content, is_alt=False):
-            label_parts = re.split('(<span.*?>.*?</span>)', content)
-            label_parts = [part for part in label_parts if part]
-            widgets = []
-            for part in label_parts:
-                part = part.strip()
-                if not part:
-                    continue
-                if '<span' in part and '</span>' in part:
-                    class_name = re.search(r'class=(["\'])([^"\']+?)\1', part)
-                    class_result = class_name.group(2) if class_name else 'icon'
-                    icon = re.sub(r'<span.*?>|</span>', '', part).strip()
-                    label = QLabel(icon)
-                    label.setProperty("class", class_result)
-                else:
-                    label = QLabel(part)
-                    label.setProperty("class", "label")
-                label.setAlignment(Qt.AlignmentFlag.AlignCenter)  
-                label.setCursor(Qt.CursorShape.PointingHandCursor)
-                add_shadow(label, self._label_shadow)
-                self._widget_container_layout.addWidget(label)
-                widgets.append(label)
-                if is_alt:
-                    label.hide()
-                else:
-                    label.show()
-            return widgets
-        self._widgets = process_content(content)
-        self._widgets_alt = process_content(content_alt, is_alt=True)
-        
-        
     def _update_label(self):
         if self._notification_count == 0 and self._hide_empty:
             self.setVisible(False)
             return
-        
-        if self.isVisible() is False:
-            self.setVisible(True)
+
         active_widgets = self._widgets_alt if self._show_alt_label else self._widgets
         active_label_content = self._label_alt_content if self._show_alt_label else self._label_content
 

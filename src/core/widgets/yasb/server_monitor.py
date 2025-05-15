@@ -1,21 +1,21 @@
+from datetime import datetime
 import logging
 import os
 import re
-import requests
 import socket
 import ssl
-import urllib3
-from settings import DEBUG, SCRIPT_PATH
-from datetime import datetime
 from urllib.parse import urlparse
-from core.widgets.base import BaseWidget
-from core.validation.widgets.yasb.server_monitor import VALIDATION_SCHEMA
-from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget, QVBoxLayout, QScrollArea, QGraphicsOpacityEffect
+import urllib.error
+import urllib.request
+
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QPropertyAnimation, QEasingCurve
-from core.utils.utilities import PopupWidget, add_shadow
+from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget, QVBoxLayout, QScrollArea, QGraphicsOpacityEffect
+
+from core.utils.utilities import PopupWidget, ToastNotifier, add_shadow, build_widget_label
 from core.utils.widgets.animation_manager import AnimationManager
-from win11toast import toast
-urllib3.disable_warnings()
+from core.validation.widgets.yasb.server_monitor import VALIDATION_SCHEMA
+from core.widgets.base import BaseWidget
+from settings import DEBUG, SCRIPT_PATH
 
 # Add new worker class
 class ServerCheckWorker(QThread):
@@ -87,32 +87,43 @@ class ServerCheckWorker(QThread):
         }
 
     def ping_server(self, server, ssl_verify, ssl_check, timeout):
-        # HTTP response check
+        """Check server availability and collect status information."""
+        http_status = None
+        response_time = None
+        final_hostname = server
+        url = f'https://{server}' if ssl_check else f'http://{server}'
+
+        # Configure SSL context if needed
+        context = ssl.create_default_context() if not ssl_verify else None
+        if context:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+
         try:
-            url = f'https://{server}' if ssl_check else f'http://{server}'
+            # Time the request
             start_time = datetime.now()
-            response = requests.get(url, timeout=timeout, verify=ssl_verify, allow_redirects=True)
-            end_time = datetime.now()
-            http_status = response.status_code
-            response_time = int((end_time - start_time).total_seconds() * 1000)
-            # Parse the final URL so we can send the correct hostname to the SSL check
-            parsed_url = urlparse(response.url)
-            final_hostname = parsed_url.netloc or server
-        except requests.RequestException:
-            http_status = None
-            response_time = None
-            final_hostname = server
-
-        # SSL expiry check
-        if ssl_check:
-            ssl_days = self.check_ssl_expiry(final_hostname, timeout)
-        else:
-            ssl_days = None
-
-        if http_status is not None and response_time is not None:
-            status = "Online"
-        else:
-            status = "Offline"
+            request = urllib.request.Request(url, method="GET")
+            
+            try:
+                with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
+                    http_status = response.status
+                    # Get redirect hostname if any
+                    parsed_url = urlparse(response.url)
+                    final_hostname = parsed_url.netloc or server
+            except urllib.error.HTTPError as e:
+                http_status = e.code
+                
+            # Calculate response time if we got a status code
+            if http_status is not None:
+                response_time = int((datetime.now() - start_time).total_seconds() * 1000)
+                
+        except (urllib.error.URLError, socket.timeout, ssl.SSLError, ConnectionError):
+            pass
+        
+        # Check SSL if needed and determine status
+        ssl_days = self.check_ssl_expiry(final_hostname, timeout) if ssl_check else None
+        status = "Online" if http_status is not None and http_status < 500 else "Offline"
+        
         return {
             "status": status,
             "response_time": response_time,
@@ -178,7 +189,6 @@ class ServerMonitor(BaseWidget):
         self._server_status_data = None
         self._first_run = True
         self._animations = []
-        self._yasb_guid = self._get_guid()
         self._icon_path = os.path.join(SCRIPT_PATH, 'assets', 'images', 'app_transparent.png')
         
         # Construct container
@@ -193,7 +203,7 @@ class ServerMonitor(BaseWidget):
         # Add the container to the main widget layout
         self.widget_layout.addWidget(self._widget_container)
 
-        self._create_dynamically_label(self._label_content, self._label_alt_content)
+        build_widget_label(self, self._label_content, self._label_alt_content, self._label_shadow)
 
         self.register_callback("toggle_label", self._toggle_label)
         self.register_callback("toggle_menu", self._toggle_menu)
@@ -263,40 +273,9 @@ class ServerMonitor(BaseWidget):
         if self._animation['enabled']:
             AnimationManager.animate(self, self._animation['type'], self._animation['duration'])
         self.show_menu()
-        
-    def _create_dynamically_label(self, content: str, content_alt: str):
-        def process_content(content, is_alt=False):
-            label_parts = re.split('(<span.*?>.*?</span>)', content)
-            label_parts = [part for part in label_parts if part]
-            widgets = []
-            for part in label_parts:
-                part = part.strip()
-                if not part:
-                    continue
-                if '<span' in part and '</span>' in part:
-                    class_name = re.search(r'class=(["\'])([^"\']+?)\1', part)
-                    class_result = class_name.group(2) if class_name else 'icon'
-                    icon = re.sub(r'<span.*?>|</span>', '', part).strip()
-                    label = QLabel(icon)
-                    label.setProperty("class", class_result)
-                else:
-                    label = QLabel(part)
-                    label.setProperty("class", "label")
-                label.setAlignment(Qt.AlignmentFlag.AlignCenter)  
-                label.setCursor(Qt.CursorShape.PointingHandCursor)
-                add_shadow(label, self._label_shadow)
-                self._widget_container_layout.addWidget(label)
-                widgets.append(label)
-                if is_alt:
-                    label.hide()
-                else:
-                    label.show()
-            return widgets
-        self._widgets = process_content(content)
-        self._widgets_alt = process_content(content_alt, is_alt=True)
 
     def _update_label(self):
-        
+
         active_widgets = self._widgets_alt if self._show_alt_label else self._widgets
         active_label_content = self._label_alt_content if self._show_alt_label else self._label_content
         label_parts = re.split('(<span.*?>.*?</span>)', active_label_content)
@@ -340,13 +319,6 @@ class ServerMonitor(BaseWidget):
                         active_widgets[widget_index].setToolTip(f"{online_count} online, {offline_count} offline")
                 widget_index += 1
 
-
-    def _get_guid(self):
-        yasb_path = r"C:\Program Files\Yasb\yasb.exe"
-        if os.path.exists(yasb_path):
-            return '{6D809377-6AF0-444B-8957-A3773F02200E}\\Yasb\\yasb.exe'
-        else:
-            return 'Yasb'
             
     def _send_notification(self):
         try:
@@ -355,10 +327,11 @@ class ServerMonitor(BaseWidget):
         except Exception:
             offline_count = 0
             ssl_warning = False
+        toaster = ToastNotifier()
         if offline_count > 0 and self._desktop_notifications['offline']:
-            toast("Server Monitor", f"{offline_count} server(s) are offline",app_id=self._yasb_guid, icon=self._icon_path)
+            toaster.show(self._icon_path, "Server Monitor", f"{offline_count} server(s) are offline")
         if ssl_warning and self._desktop_notifications['ssl']:
-            toast("Server Monitor", "Some servers have SSL certificate expiring soon",app_id=self._yasb_guid, icon=self._icon_path)
+            toaster.show(self._icon_path, "Server Monitor", "Some servers have SSL certificate expiring soon")
             
 
     def show_menu(self):  

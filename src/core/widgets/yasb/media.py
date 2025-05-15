@@ -9,7 +9,7 @@ from PyQt6 import QtCore
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QWheelEvent
 from PIL.ImageQt import ImageQt
-from winsdk.windows.media.control import GlobalSystemMediaTransportControlsSessionPlaybackInfo
+from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionPlaybackInfo
 
 from core.utils.win32.media import WindowsMedia
 from core.widgets.base import BaseWidget
@@ -370,9 +370,13 @@ class MediaWidget(BaseWidget):
             "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify": "Spotify",
             "Spotify.exe": "Spotify",
             "308046B0AF4A39CB": "FireFox",
+            "firefox.exe": "FireFox",
             "F0DC299D809B9700": "Zen",
             "MSEdge": "Edge",
+            "msedge.exe": "Edge",
             "Chrome": "Chrome",
+            "chrome.exe": "Chrome",
+            "opera.exe": "Opera",
             "Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic": "Media Player",
             "foobar2000.exe": "Foobar2000",
             "MusicBee.exe": "MusicBee",
@@ -667,14 +671,27 @@ class MediaWidget(BaseWidget):
         if self._controls_only:
             return
 
-        # Shorten fields if necessary with ...
-        #media_info = {k: self._format_max_field_size(v) if isinstance(v, str) else v for k, v in media_info.items()}
-        format_label_content = active_label_content.format(**{
-            k: self._format_max_field_size(v) if isinstance(v, str) else v
-            for k, v in media_info.items()
-        })
+        if self._max_field_size['truncate_whole_label']:
+            try:
+                formatted_info = {
+                    k: self._format_max_field_size(v, f'field_{k}') if isinstance(v, str) else v
+                    for k, v in media_info.items()
+                }
+                format_label_content = active_label_content.format(**formatted_info)
+                format_label_content = self._format_max_field_size(format_label_content)
+            except Exception as e:
+                logging.error(f'MediaWidget: Error formatting label: {e}')
+                # Try to at least show the title if available
+                if media_info and 'title' in media_info and media_info['title']:
+                    format_label_content = self._format_max_field_size(media_info['title'])
+                else:
+                    format_label_content = "No media"
+        else:
+            format_label_content = active_label_content.format(**{
+                k: self._format_max_field_size(v) if isinstance(v, str) else v
+                for k, v in media_info.items()
+            })
         # Format the label
-        # format_label_content = active_label_content.format(**media_info)
         active_label.setText(format_label_content)
 
         # If we don't want the thumbnail, stop here

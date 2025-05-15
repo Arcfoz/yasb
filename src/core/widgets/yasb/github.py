@@ -1,18 +1,87 @@
+import logging
 import os
 import re
-import logging
 import threading
-import requests
-from settings import DEBUG
 from datetime import datetime
+from enum import StrEnum
+from typing import Any
+
+import json
+import urllib.request
+import urllib.error
+from PyQt6.QtCore import QPoint, Qt, QTimer, QUrl
+from PyQt6.QtGui import QColor, QCursor, QDesktopServices, QPainter, QPaintEvent
+from PyQt6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+
 from core.utils.utilities import PopupWidget, add_shadow
+from core.utils.widgets.animation_manager import AnimationManager
 from core.validation.widgets.yasb.github import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
-from PyQt6.QtGui import QDesktopServices,QCursor
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QScrollArea, QVBoxLayout, QGraphicsOpacityEffect
-from PyQt6.QtCore import Qt, QTimer, QUrl
-from core.utils.widgets.animation_manager import AnimationManager
-logging.getLogger("urllib3").setLevel(logging.WARNING)
+from settings import DEBUG
+
+
+class Corner(StrEnum):
+    """Enum for notification dot position corners."""
+
+    TOP_LEFT = "top_left"
+    TOP_RIGHT = "top_right"
+    BOTTOM_LEFT = "bottom_left"
+    BOTTOM_RIGHT = "bottom_right"
+
+
+class NotificationLabel(QLabel):
+    """Draws a QLabel with a dot on any of the four corners of the icon."""
+
+    def __init__(self, *args: Any, color: str = "red", corner: Corner = Corner.BOTTOM_LEFT, margin: list[int] = [1, 1], **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self._show_dot = False
+        self._color = color
+        self._corner = corner
+        self._margin = margin
+
+    def show_dot(self, enabled: bool):
+        self._show_dot = enabled
+        self.update()
+
+    def set_corner(self, corner: str | Corner):
+        """Set the corner where the dot should appear."""
+        self._corner = corner
+        self.update()
+
+    def set_color(self, color: str):
+        """Set the color of the notification dot."""
+        self._color = color
+        self.update()
+
+    def paintEvent(self, a0: QPaintEvent | None):
+        super().paintEvent(a0)
+        if self._show_dot:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setBrush(QColor(self._color))
+            painter.setPen(Qt.PenStyle.NoPen)
+
+            radius = 6
+            margin_x = self._margin[0]
+            margin_y = self._margin[1]
+
+            # Calculate position based on the specified corner
+            x = y = 0
+            if self._corner == Corner.TOP_LEFT:
+                x = margin_x
+                y = margin_y
+            elif self._corner == Corner.TOP_RIGHT:
+                x = self.width() - radius - margin_x
+                y = margin_y
+            elif self._corner == Corner.BOTTOM_LEFT:
+                x = margin_x
+                y = self.height() - radius - margin_y
+            elif self._corner == Corner.BOTTOM_RIGHT:
+                x = self.width() - radius - margin_x
+                y = self.height() - radius - margin_y
+
+            painter.drawEllipse(QPoint(x + radius // 2, y + radius // 2), radius // 2, radius // 2)
+
 
 class GithubWidget(BaseWidget):
     validation_schema = VALIDATION_SCHEMA
@@ -24,6 +93,7 @@ class GithubWidget(BaseWidget):
             token: str,
             tooltip: bool,
             max_notification: int,
+            notification_dot: dict[str, Any],
             only_unread: bool,
             max_field_size: int,
             menu: dict[str, str],
@@ -32,8 +102,8 @@ class GithubWidget(BaseWidget):
             animation: dict[str, str],
             container_padding: dict[str, int],
             label_shadow: dict = None,
-            container_shadow: dict = None
-        ):
+            container_shadow: dict = None,
+    ):
         super().__init__((update_interval * 1000), class_name="github-widget")
   
         self._show_alt_label = False
@@ -50,6 +120,9 @@ class GithubWidget(BaseWidget):
         self._padding = container_padding
         self._label_shadow = label_shadow
         self._container_shadow = container_shadow
+
+        self._notification_label: NotificationLabel | None = None
+        self._notification_dot: dict[str, Any] = notification_dot
 
         self._github_data = []
         
@@ -94,7 +167,7 @@ class GithubWidget(BaseWidget):
         for widget in self._widgets_alt:
             widget.setVisible(self._show_alt_label)
         self._update_label()
-
+ 
     def _create_dynamically_label(self, content: str, content_alt: str):
         def process_content(content, is_alt=False):
             label_parts = re.split('(<span.*?>.*?</span>)', content)
@@ -108,8 +181,14 @@ class GithubWidget(BaseWidget):
                     class_name = re.search(r'class=(["\'])([^"\']+?)\1', part)
                     class_result = class_name.group(2) if class_name else 'icon'
                     icon = re.sub(r'<span.*?>|</span>', '', part).strip()
-                    label = QLabel(icon)
+                    label = NotificationLabel(
+                        icon,
+                        corner=self._notification_dot["corner"],
+                        color=self._notification_dot["color"],
+                        margin=self._notification_dot["margin"]
+                    )
                     label.setProperty("class", class_result)
+                    self._notification_label = label
                 else:
                     label = QLabel(part)
                     label.setProperty("class", "label")
@@ -126,7 +205,6 @@ class GithubWidget(BaseWidget):
             return widgets
         self._widgets = process_content(content)
         self._widgets_alt = process_content(content_alt, is_alt=True)
-        
 
     def _update_label(self):
         notification_count = len([notification for notification in self._github_data if notification['unread']])
@@ -134,7 +212,11 @@ class GithubWidget(BaseWidget):
         active_label_content = self._label_alt_content if self._show_alt_label else self._label_content
         # Split label content and filter out empty parts
         label_parts = [part.strip() for part in re.split(r'(<span.*?>.*?</span>)', active_label_content) if part]
-        
+
+        # Setting the notification dot if enabled and the label exists
+        if self._notification_dot["enabled"] and self._notification_label is not None:
+            self._notification_label.show_dot(notification_count > 0)
+
         for widget_index, part in enumerate(label_parts):
             if widget_index >= len(active_widgets) or not isinstance(active_widgets[widget_index], QLabel):
                 continue
@@ -183,13 +265,13 @@ class GithubWidget(BaseWidget):
             'Accept': 'application/vnd.github.v3+json'
         }
         url = f'https://api.github.com/notifications/threads/{notification_id}'
+        req = urllib.request.Request(url, headers=headers, method='PATCH')
         try:
-            response = requests.patch(url, headers=headers)
-            response.raise_for_status()
-            if DEBUG:
-                logging.info(f"Notification {notification_id} marked as read on GitHub.")
-        except requests.HTTPError as e:
-            logging.error(f"HTTP Error occurred: {e.response.status_code} - {e.response.text}")
+            with urllib.request.urlopen(req) as response:
+                if DEBUG:
+                    logging.info(f"Notification {notification_id} marked as read on GitHub.")
+        except urllib.error.HTTPError as e:
+            logging.error(f"HTTP Error occurred: {e.code} - {e.reason}")
         except Exception as e:
             logging.error(f"An unexpected error occurred: {str(e)}, in most cases this error when there is no internet connection.")
 
@@ -353,11 +435,14 @@ class GithubWidget(BaseWidget):
             'per_page': self._max_notification
         }
 
-        try:
-            response = requests.get('https://api.github.com/notifications', headers=headers, params=params)
-            response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
+        url = 'https://api.github.com/notifications'
+        query_string = '&'.join(f"{k}={v}" for k, v in params.items())
+        full_url = f"{url}?{query_string}"
 
-            notifications = response.json()
+        req = urllib.request.Request(full_url, headers=headers)
+        try:
+            with urllib.request.urlopen(req) as response:
+                notifications = json.loads(response.read().decode())
             result = []
             if notifications:
                 for notification in notifications:
@@ -376,7 +461,7 @@ class GithubWidget(BaseWidget):
                         github_url = subject_url.replace('api.github.com/repos', 'github.com')
                     else:
                         github_url = notification['repository']['html_url']
-                    
+
                     result.append({
                         'id': notification['id'],
                         'repository': repo_full_name,
@@ -389,12 +474,12 @@ class GithubWidget(BaseWidget):
             else:
                 return []
 
-        except requests.ConnectionError:
+        except urllib.error.URLError:
             logging.error("No internet connection. Unable to fetch notifications.")
-            return []  # Return an empty list or handle as needed
-        except requests.HTTPError as e:
-            logging.error(f"HTTP Error occurred: {e.response.status_code} - {e.response.text}")
-            return []  # Handle other HTTP errors as needed
+            return []
+        except urllib.error.HTTPError as e:
+            logging.error(f"HTTP Error occurred: {e.code} - {e.reason}")
+            return []
         except Exception as e:
             logging.error(f"An unexpected error occurred: {str(e)}")
-            return []  # Handle any other exceptions
+            return []

@@ -1,13 +1,12 @@
 import os
-import re
 import subprocess
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.home import VALIDATION_SCHEMA
-from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget, QVBoxLayout, QFrame
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget, QVBoxLayout
+from PyQt6.QtCore import Qt
 import os
 from core.utils.widgets.power import PowerOperations
-from core.utils.utilities import PopupWidget, add_shadow
+from core.utils.utilities import PopupWidget, add_shadow, build_widget_label
 from core.utils.widgets.animation_manager import AnimationManager
 import logging
 
@@ -64,41 +63,13 @@ class HomeWidget(BaseWidget):
         self._widget_container.setProperty("class", "widget-container")
         add_shadow(self._widget_container, self._container_shadow)
         # Add the container to the main widget layout
-        self.widget_layout.addWidget(self._widget_container)
-        self._create_dynamically_label(self._label)        
+        self.widget_layout.addWidget(self._widget_container)  
+        build_widget_label(self, self._label, None, self._label_shadow)      
 
         self.register_callback("toggle_menu", self._toggle_menu)         
         self.callback_left = callbacks["on_left"]
 
-        
-    def _create_dynamically_label(self, content: str):
-        def process_content(content):
-            label_parts = re.split('(<span.*?>.*?</span>)', content)
-            label_parts = [part for part in label_parts if part]
-            widgets = []
-            for part in label_parts:
-                part = part.strip()  # Remove any leading/trailing whitespace
-                if not part:
-                    continue
-                if '<span' in part and '</span>' in part:
-                    class_name = re.search(r'class=(["\'])([^"\']+?)\1', part)
-                    class_result = class_name.group(2) if class_name else 'icon'
-                    icon = re.sub(r'<span.*?>|</span>', '', part).strip()
-                    label = QLabel(icon)
-                    label.setProperty("class", class_result)
-                else:
-                    label = QLabel(part)
-                    label.setProperty("class", "label")
-                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                label.setCursor(Qt.CursorShape.PointingHandCursor)
-                add_shadow(label, self._label_shadow)
-                self._widget_container_layout.addWidget(label)
-                widgets.append(label)
-                label.show()
-                
-            return widgets
-        self._widgets = process_content(content)
- 
+     
                
     def create_menu_action(self, path):
         path = os.path.expanduser(path)
@@ -106,11 +77,14 @@ class HomeWidget(BaseWidget):
 
 
     def _create_menu(self):
-        self._menu = PopupWidget(self, self._blur, self._round_corners, self._round_corners_type, self._border_color)
+        self._menu = PopupWidget(
+            self,
+            self._blur,
+            self._round_corners,
+            self._round_corners_type,
+            self._border_color
+        )
         self._menu.setProperty('class', 'home-menu')
-        self._menu.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self._menu.setWindowFlag(Qt.WindowType.Popup)
-        self._menu.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
 
         # Create main vertical layout for the popup
         main_layout = QVBoxLayout(self._menu)
@@ -172,28 +146,12 @@ class HomeWidget(BaseWidget):
             )
             
         self._menu.adjustSize()
-        widget_global_pos = self.mapToGlobal(QPoint(self._offset_left, self.height() + self._offset_top))
-        
-        if self._direction == 'up':
-            global_y = self.mapToGlobal(QPoint(0, 0)).y() - self._menu.height() - self._offset_top
-            widget_global_pos = QPoint(self.mapToGlobal(QPoint(0, 0)).x() + self._offset_left, global_y)
-            
-        if self._alignment == 'left':
-            global_position = widget_global_pos
-        elif self._alignment == 'right':
-            global_position = QPoint(
-                widget_global_pos.x() + self.width() - self._menu.width(),
-                widget_global_pos.y()
-            )
-        elif self._alignment == 'center':
-            global_position = QPoint(
-                widget_global_pos.x() + (self.width() - self._menu.width()) // 2,
-                widget_global_pos.y()
-            )
-        else:
-            global_position = widget_global_pos
-
-        self._menu.move(global_position)
+        self._menu.setPosition(
+            alignment=self._alignment,
+            direction=self._direction,
+            offset_left=self._offset_left,
+            offset_top=self._offset_top
+        )
         self._menu.show()
 
 

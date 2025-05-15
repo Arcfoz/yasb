@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QCursor
 
 from core.widgets.base import BaseWidget
-from core.utils.utilities import PopupWidget, add_shadow
+from core.utils.utilities import PopupWidget, add_shadow, build_widget_label
 from core.validation.widgets.yasb.notes import VALIDATION_SCHEMA
 from core.utils.widgets.animation_manager import AnimationManager
 from core.config import HOME_CONFIGURATION_DIR
@@ -66,20 +66,14 @@ class NotesWidget(BaseWidget):
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
         add_shadow(self._widget_container, self._container_shadow)
-
-        # Add container to main widget layout
         self.widget_layout.addWidget(self._widget_container)
 
-        # Create label
-        self._create_dynamically_label(
-            self._label_content, self._label_alt_content)
-
-        # Register callbacks
+        build_widget_label(self, self._label_content, self._label_alt_content, self._label_shadow)
+        
         self.register_callback("toggle_label", self._toggle_label)
         self.register_callback("toggle_menu", self._toggle_menu)
         self.register_callback("update_label", self._update_label)
 
-        # Set callbacks
         self.callback_left = callbacks['on_left']
         self.callback_right = callbacks['on_right']
         self.callback_middle = callbacks['on_middle']
@@ -121,42 +115,6 @@ class NotesWidget(BaseWidget):
             AnimationManager.animate(
                 self, self._animation['type'], self._animation['duration'])
         self._show_menu()
-
-    def _create_dynamically_label(self, content: str, content_alt: str):
-        def process_content(content, is_alt=False):
-            label_parts = re.split('(<span.*?>.*?</span>)', content)
-            label_parts = [part for part in label_parts if part]
-            widgets = []
-
-            for part in label_parts:
-                part = part.strip()
-                if not part:
-                    continue
-
-                if '<span' in part and '</span>' in part:
-                    class_name = re.search(r'class=(["\'])([^"\']+?)\1', part)
-                    class_result = class_name.group(2) if class_name else 'icon'
-                    icon = re.sub(r'<span.*?>|</span>', '', part).strip()
-                    label = QLabel(icon)
-                    label.setProperty("class", class_result)
-                else:
-                    label = QLabel(part)
-                    label.setProperty("class", "label")
-
-                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                label.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-                add_shadow(label, self._label_shadow)
-                self._widget_container_layout.addWidget(label)
-                widgets.append(label)
-                if is_alt:
-                    label.hide()
-                else:
-                    label.show()
-
-            return widgets
-
-        self._widgets = process_content(content)
-        self._widgets_alt = process_content(content_alt, is_alt=True)
 
     def _update_label(self):
         active_widgets = self._widgets_alt if self._show_alt_label else self._widgets
@@ -365,14 +323,30 @@ class NotesWidget(BaseWidget):
 
         container_layout.addWidget(text_container)
 
-        # Spacer to push delete button to the right
+        # Spacer to push buttons to the right
         container_layout.addItem(QSpacerItem(0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
-        # Delete button
+        # Create vertical layout for the buttons
+        buttons_container = QWidget()
+        buttons_layout = QVBoxLayout(buttons_container)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(5)  # Space between buttons
+        buttons_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Center the buttons vertically
+
+        # Copy button on top
+        copy_button = QPushButton(self._icons['copy'])
+        copy_button.setProperty("class", "copy-button")
+        copy_button.clicked.connect(lambda: self._copy_note(note))
+        buttons_layout.addWidget(copy_button, 0, Qt.AlignmentFlag.AlignCenter)
+
+        # Delete button on bottom
         delete_button = QPushButton(self._icons['delete'])
         delete_button.setProperty("class", "delete-button")
         delete_button.clicked.connect(lambda: self._delete_note(note))
-        container_layout.addWidget(delete_button)
+        buttons_layout.addWidget(delete_button, 0, Qt.AlignmentFlag.AlignCenter)
+
+        # Add the buttons container to the main layout
+        container_layout.addWidget(buttons_container)
 
         # Edit on click
         container.mousePressEvent = lambda e: self._edit_note(note) if e.button() == Qt.MouseButton.LeftButton else None
@@ -410,6 +384,12 @@ class NotesWidget(BaseWidget):
         self._note_input.clear()
         self.add_button.setText("Add Note")
         self.cancel_button.hide()
+
+    def _copy_note(self, note):
+        """Copy note content to clipboard"""
+        from PyQt6.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        clipboard.setText(note['title'])
 
     def _load_notes(self) -> List[Dict]:
         """Load notes from JSON file"""
