@@ -6,7 +6,8 @@ DEFAULTS = {
     'hide_unsupported': True,
     'charging_options': {
         'icon_format': '{charging_icon} {icon}',
-        'blink_charging_icon': True
+        'blink_charging_icon': True,
+        'blink_interval': 500
     },
     'status_thresholds': {
         'critical': 10,
@@ -69,6 +70,12 @@ VALIDATION_SCHEMA = {
             'blink_charging_icon': {
                 'type': 'boolean',
                 'default': DEFAULTS['charging_options']['blink_charging_icon']
+            },
+            'blink_interval': {
+                'type': 'integer',
+                'min': 100,
+                'max': 5000,
+                'default': DEFAULTS['charging_options']['blink_interval']
             }
         },
         'default': DEFAULTS['charging_options']

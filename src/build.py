@@ -39,6 +39,7 @@ build_options = {
         'core.widgets.yasb.pomodoro',
         'core.widgets.yasb.notes',
         'core.widgets.yasb.recycle_bin',
+        'core.widgets.yasb.vscode',
         'core.widgets.komorebi.control',
         'core.widgets.komorebi.active_layout',
         'core.widgets.komorebi.stack',
@@ -120,7 +121,7 @@ executables = [
         "main.py",
         base="gui",
         icon="assets/images/app_icon.ico",
-        shortcut_name="Yasb",
+        shortcut_name="YASB",
         shortcut_dir="MyProgramMenu",
         copyright=f"Copyright (C) {datetime.datetime.now().year} AmN",
         target_name="yasb",
@@ -128,7 +129,6 @@ executables = [
     Executable(
         "core/utils/themes.py",
         base="gui",
-        shortcut_name="Yasb Themes",
         icon="assets/images/app_icon.ico",
         copyright=f"Copyright (C) {datetime.datetime.now().year} AmN",
         target_name="yasb_themes",
@@ -150,5 +150,5 @@ setup(
     options={
         "build_exe": build_options,
         "bdist_msi": bdist_msi_options,
-    },
+    }
 )
