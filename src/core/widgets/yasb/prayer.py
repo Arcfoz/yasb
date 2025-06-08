@@ -170,10 +170,21 @@ class PrayerTimeWidget(BaseWidget):
         # Create frames for each prayer
         failed_icons: list[tuple[QLabel, str]] = []
         prayer_names = ["fajr", "dhuhr", "asr", "maghrib", "isha"]
+        now = datetime.now()
+        next_prayer, _, _ = self.time_until_next_prayer()
+        current_prayer = self._current_prayer
         for prayer in prayer_names:
             prayer_day = QWidget()
             now_widgets.append(prayer_day)
-            prayer_day.setProperty("class", "prayer-card-day")
+            # Determine prayer status
+            if current_prayer and prayer.lower() == current_prayer.lower():
+                prayer_day.setProperty("class", "prayer-card-day prayer-card-day-active")
+            elif prayer.lower() == next_prayer.lower():
+                prayer_day.setProperty("class", "prayer-card-day prayer-card-day-next")
+            elif current_prayer and prayer_names.index(prayer) < prayer_names.index(current_prayer.lower()):
+                prayer_day.setProperty("class", "prayer-card-day prayer-card-day-past")
+            else:
+                prayer_day.setProperty("class", "prayer-card-day")
             layout_day = QHBoxLayout(prayer_day)
             name = prayer.capitalize()
             time_prayer = self.prayer_time_data[prayer]
@@ -187,7 +198,20 @@ class PrayerTimeWidget(BaseWidget):
         for extra in extra_names:
             extra_day = QWidget()
             extra_widgets.append(extra_day)
-            extra_day.setProperty("class", "prayer-card-day")
+            # Determine extra time status (active/next/past)
+            # We'll use the same logic, but since these are not always prayers, we compare by time
+            extra_time = self.parse_time(self.prayer_time_data[extra])
+            if extra_time:
+                if current_prayer and extra.lower() == current_prayer.lower():
+                    extra_day.setProperty("class", "prayer-card-day prayer-card-day-active")
+                elif extra.lower() == next_prayer.lower():
+                    extra_day.setProperty("class", "prayer-card-day prayer-card-day-next")
+                elif extra_time < now:
+                    extra_day.setProperty("class", "prayer-card-day prayer-card-day-past")
+                else:
+                    extra_day.setProperty("class", "prayer-card-day")
+            else:
+                extra_day.setProperty("class", "prayer-card-day")
             layout_extra = QHBoxLayout(extra_day)
             name = extra.capitalize()
             time_extra = self.prayer_time_data[extra]
