@@ -10,6 +10,24 @@ DEFAULTS = {
         "on_middle": "do_nothing",
         "on_right": "do_nothing",
     },
+    'container_padding': {'top': 0, 'left': 0, 'bottom': 0, 'right': 0},
+    'animation': {
+        'enabled': True,
+        'type': 'fadeInOut',
+        'duration': 200
+    },
+    'prayer_card': {
+        'blur': True,
+        'round_corners': True,
+        'round_corners_type': 'normal',
+        'border_color': 'System',
+        'alignment': 'right',
+        'direction': 'down',
+        'distance': 6, # deprecated
+        'offset_top': 6,
+        'offset_left': 0,
+        'icon_size': 64
+    },
 }
 
 VALIDATION_SCHEMA = {
@@ -38,6 +56,94 @@ VALIDATION_SCHEMA = {
             "Midnight": {"type": "integer", "default": 0},
         },
         "default": {},
+    },
+    'prayer_card': {
+        'type': 'dict',
+        'schema': {
+            'blur': {
+                'type': 'boolean',
+                'default': DEFAULTS['prayer_card']['blur']
+            },
+            'round_corners': {
+                'type': 'boolean',
+                'default': DEFAULTS['prayer_card']['round_corners']
+            },
+            'round_corners_type': {
+                'type': 'string',
+                'default': DEFAULTS['prayer_card']['round_corners_type'],
+                'allowed': ['normal', 'small']
+            },
+            'border_color': {
+                'type': 'string',
+                'default': DEFAULTS['prayer_card']['border_color']
+            },
+            'alignment': {
+                'type': 'string',
+                'default': DEFAULTS['prayer_card']['alignment']
+            },
+            'direction': {
+                'type': 'string',
+                'default': DEFAULTS['prayer_card']['direction']
+            },
+            'distance': {
+                'type': 'integer',
+                'default': DEFAULTS['prayer_card']['distance']
+            },
+            'offset_top': {
+                'type': 'integer',
+                'default': DEFAULTS['prayer_card']['offset_top']
+            },
+            'offset_left': {
+                'type': 'integer',
+                'default': DEFAULTS['prayer_card']['offset_left']
+            },
+            'icon_size': {
+                'type': 'integer',
+                'default': DEFAULTS['prayer_card']['icon_size']
+            }
+        },
+        'default': DEFAULTS['prayer_card']
+    },
+    'animation': {
+        'type': 'dict',
+        'schema': {
+            'enabled': {
+                'type': 'boolean',
+                'default': DEFAULTS['animation']['enabled']
+            },
+            'type': {
+                'type': 'string',
+                'default': DEFAULTS['animation']['type']
+            },
+            'duration': {
+                'type': 'integer',
+                'default': DEFAULTS['animation']['duration']
+            }
+        },
+        'default': DEFAULTS['animation']
+    },
+    'container_padding': {
+        'type': 'dict',
+        'required': False,
+        'schema': {
+            'top': {
+                'type': 'integer',
+                'default': DEFAULTS['container_padding']['top']
+            },
+            'left': {
+                'type': 'integer',
+                'default': DEFAULTS['container_padding']['left']
+            },
+            'bottom': {
+                'type': 'integer',
+                'default': DEFAULTS['container_padding']['bottom']
+            },
+            'right': {
+                'type': 'integer',
+                'default': DEFAULTS['container_padding']['right']
+            }
+        },
+        'default': DEFAULTS['container_padding']
     },
     "callbacks": {
         "type": "dict",

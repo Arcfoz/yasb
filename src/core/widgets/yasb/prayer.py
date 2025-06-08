@@ -9,8 +9,13 @@ import time
 import os
 from core.widgets.base import BaseWidget
 from core.validation.widgets.yasb.prayer import VALIDATION_SCHEMA
-from PyQt6.QtWidgets import QLabel, QHBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QStyle, QVBoxLayout, QWidget
 from PyQt6.QtCore import Qt, QTimer
+
+
+
+from core.utils.utilities import PopupWidget
+from core.utils.widgets.animation_manager import AnimationManager
 
 
 class PrayerTimeWidget(BaseWidget):
@@ -25,6 +30,9 @@ class PrayerTimeWidget(BaseWidget):
         country: str,
         method: int,
         callbacks: dict[str, str],
+        prayer_card: dict[str, str],
+        container_padding: dict[str, int],
+        animation: dict[str, str],
         tune: dict = None,
     ):
         super().__init__((update_interval * 1000), class_name="prayer-time-widget")
@@ -70,6 +78,9 @@ class PrayerTimeWidget(BaseWidget):
 
         self.prayer_time_data = None
         self._show_alt_label = False
+        self._animation = animation
+        self._prayer_card: dict[str, Any] = prayer_card
+        self._padding = container_padding
         self._current_prayer = None
         self._prayer_start_time = None
         self._pre_prayer_time = 5  # minutes before prayer
@@ -77,7 +88,12 @@ class PrayerTimeWidget(BaseWidget):
 
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._widget_container_layout.setContentsMargins(
+            self._padding["left"],
+            self._padding["top"],
+            self._padding["right"],
+            self._padding["bottom"],
+        )
 
         self._widget_container: QWidget = QWidget()
         self._widget_container.setLayout(self._widget_container_layout)
@@ -87,11 +103,12 @@ class PrayerTimeWidget(BaseWidget):
         self._create_dynamically_label(self._label_content, self._label_alt_content)
 
         self.register_callback("toggle_label", self._toggle_label)
+        self.register_callback("toggle_card", self._toggle_card)
         self.register_callback("update_label", self._update_label)
-        self.register_callback("fetch_prayer_time_data", self.fetch_prayer_time_data)
 
         self.callback_left = callbacks["on_left"]
-        self.callback_timer = "fetch_prayer_time_data"
+        self.callback_right = callbacks["on_right"]
+        self.callback_middle = callbacks["on_middle"]
 
         self._current_prayer_end_time = None
 
@@ -109,12 +126,100 @@ class PrayerTimeWidget(BaseWidget):
             threading.Thread(target=self._get_prayer_time_data).start()
 
     def _toggle_label(self):
+        if self._animation["enabled"]:
+            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])  # type: ignore
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
         for widget in self._widgets_alt:
             widget.setVisible(self._show_alt_label)
         self._update_label(update_class=False)
+
+    def _toggle_card(self):
+        if self._animation["enabled"]:
+            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])  # type: ignore
+        self._popup_card()
+
+    def _popup_card(self):
+        if self.prayer_time_data is None:
+            logging.warning(f"Prayer data is not yet available. self.prayer_time_data={self.prayer_time_data}")
+            return
+
+        self.dialog = PopupWidget(
+            self,
+            self._prayer_card["blur"],
+            self._prayer_card["round_corners"],
+            self._prayer_card["round_corners_type"],
+            self._prayer_card["border_color"],
+        )
+        self.dialog.setProperty("class", "prayer-card")
+
+        main_layout = QVBoxLayout()
+        frame_today = QWidget()
+        frame_today.setProperty("class", "prayer-card-now")
+        layout_today = QVBoxLayout(frame_today)
+
+        today_label0 = QLabel(f"{self.prayer_time_data['city']} {self._country}")
+        today_label0.setProperty("class", "label location")
+        today_label0.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        layout_today.addWidget(today_label0)
+        
+
+        now_widgets: list[QWidget] = []
+        # Create frames for each prayer
+        failed_icons: list[tuple[QLabel, str]] = []
+        prayer_names = ["fajr", "dhuhr", "asr", "maghrib", "isha"]
+        for prayer in prayer_names:
+            prayer_day = QWidget()
+            now_widgets.append(prayer_day)
+            prayer_day.setProperty("class", "prayer-card-day")
+            layout_day = QHBoxLayout(prayer_day)
+            name = prayer.capitalize()
+            time_prayer = self.prayer_time_data[prayer]
+            row_day_label = QLabel(f"{name}\n{time_prayer}")
+            row_day_label.setProperty("class", "label")
+            layout_day.addWidget(row_day_label)
+
+        # Additional times to show on a new row
+        extra_names = ["sunrise", "sunset", "midnight", "firstthird", "lastthird"]
+        extra_widgets: list[QWidget] = []
+        for extra in extra_names:
+            extra_day = QWidget()
+            extra_widgets.append(extra_day)
+            extra_day.setProperty("class", "prayer-card-day")
+            layout_extra = QHBoxLayout(extra_day)
+            name = extra.capitalize()
+            time_extra = self.prayer_time_data[extra]
+            row_extra_label = QLabel(f"{name}\n{time_extra}")
+            row_extra_label.setProperty("class", "label")
+            layout_extra.addWidget(row_extra_label)
+
+        # Create days layout and add frames
+        prayer_layout = QHBoxLayout()
+        for widget in now_widgets:
+            prayer_layout.addWidget(widget)
+
+        # Create extra times layout and add frames
+        extra_layout = QHBoxLayout()
+        for widget in extra_widgets:
+            extra_layout.addWidget(widget)
+
+        # Add the "Current" label on top, days in the middle, extra times on the bottom
+        main_layout.addWidget(frame_today)
+        main_layout.addLayout(prayer_layout)
+        main_layout.addLayout(extra_layout)
+
+        self.dialog.setLayout(main_layout)
+
+        self.dialog.adjustSize()
+        self.dialog.setPosition(
+            alignment=self._prayer_card["alignment"],
+            direction=self._prayer_card["direction"],
+            offset_left=self._prayer_card["offset_left"],
+            offset_top=self._prayer_card["offset_top"],
+        )
+        self.dialog.show()
 
     def _create_dynamically_label(self, content: str, content_alt: str):
         def process_content(content, is_alt=False):
