@@ -200,7 +200,7 @@ class PrayerTimeWidget(BaseWidget):
             layout_day.addWidget(row_day_label)
 
         # Additional times to show on a new row
-        extra_names = ["sunrise", "sunset", "midnight", "firstthird", "lastthird"]
+        extra_names = ["lastthird", "sunrise", "sunset", "firstthird", "midnight"]
         extra_widgets: list[QWidget] = []
         for extra in extra_names:
             extra_day = QWidget()
