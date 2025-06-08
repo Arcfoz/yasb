@@ -105,10 +105,12 @@ class PrayerTimeWidget(BaseWidget):
         self.register_callback("toggle_label", self._toggle_label)
         self.register_callback("toggle_card", self._toggle_card)
         self.register_callback("update_label", self._update_label)
+        self.register_callback("fetch_prayer_time_data", self.fetch_prayer_time_data)
 
         self.callback_left = callbacks["on_left"]
         self.callback_right = callbacks["on_right"]
         self.callback_middle = callbacks["on_middle"]
+        self.callback_timer = "fetch_prayer_time_data"
 
         self._current_prayer_end_time = None
 
