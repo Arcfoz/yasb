@@ -1,15 +1,6 @@
 """Wrappers for win32 API functions to make them easier to use and have proper types"""
 
-from ctypes import (
-    POINTER,
-    Array,
-    byref,
-    c_int,
-    c_long,
-    c_wchar,
-    create_string_buffer,
-    windll,
-)
+from ctypes import POINTER, Array, byref, c_int, c_long, c_wchar, create_string_buffer, windll, wintypes
 from ctypes.wintypes import (
     BOOL,
     DWORD,
@@ -30,11 +21,7 @@ from ctypes.wintypes import (
 )
 from typing import TYPE_CHECKING, Any
 
-from core.utils.win32.structs import (
-    BITMAPINFO,
-    HBITMAP,
-    ICONINFO,
-)
+from core.utils.win32.structs import BITMAPINFO, GUID, HBITMAP, ICONINFO
 
 if TYPE_CHECKING:
     # NOTE: this is an internal ctypes type that does not exist during runtime
@@ -45,6 +32,7 @@ else:
 user32 = windll.user32
 gdi32 = windll.gdi32
 kernel32 = windll.kernel32
+powrprof = windll.powrprof
 
 # --- Function prototypes (argtypes/restype) ---
 user32.DefWindowProcW.argtypes = [HWND, UINT, WPARAM, LPARAM]
@@ -486,3 +474,74 @@ def CreateFile(
         dwFlagsAndAttributes,
         hTemplateFile,
     )
+
+
+# -- Power management function prototypes -- #
+powrprof.PowerEnumerate.argtypes = [
+    wintypes.HANDLE,
+    POINTER(GUID),
+    POINTER(GUID),
+    wintypes.DWORD,
+    wintypes.ULONG,
+    wintypes.LPBYTE,
+    POINTER(wintypes.DWORD),
+]
+powrprof.PowerEnumerate.restype = wintypes.DWORD
+
+powrprof.PowerReadFriendlyName.argtypes = [
+    wintypes.HANDLE,
+    POINTER(GUID),
+    POINTER(GUID),
+    POINTER(wintypes.DWORD),
+    wintypes.LPBYTE,
+    POINTER(wintypes.DWORD),
+]
+powrprof.PowerReadFriendlyName.restype = wintypes.DWORD
+
+powrprof.PowerGetActiveScheme.argtypes = [wintypes.HANDLE, POINTER(POINTER(GUID))]
+powrprof.PowerGetActiveScheme.restype = wintypes.DWORD
+
+powrprof.PowerSetActiveScheme.argtypes = [wintypes.HANDLE, POINTER(GUID)]
+powrprof.PowerSetActiveScheme.restype = wintypes.DWORD
+
+
+# -- Power management function wrappers -- #
+def PowerEnumerate(
+    RootPowerKey,
+    SchemeGuid,
+    SubGroupOfPowerSettingsGuid,
+    AccessFlags,
+    Index,
+    Buffer,
+    BufferSize,
+):
+    return powrprof.PowerEnumerate(
+        RootPowerKey, SchemeGuid, SubGroupOfPowerSettingsGuid, AccessFlags, Index, Buffer, BufferSize
+    )
+
+
+def PowerReadFriendlyName(
+    RootPowerKey,
+    SchemeGuid,
+    SubGroupOfPowerSettingsGuid,
+    PowerSettingGuid,
+    Buffer,
+    BufferSize,
+):
+    return powrprof.PowerReadFriendlyName(
+        RootPowerKey, SchemeGuid, SubGroupOfPowerSettingsGuid, PowerSettingGuid, Buffer, BufferSize
+    )
+
+
+def PowerGetActiveScheme(
+    UserRootPowerKey,
+    ActivePolicyGuid,
+):
+    return powrprof.PowerGetActiveScheme(UserRootPowerKey, ActivePolicyGuid)
+
+
+def PowerSetActiveScheme(
+    UserRootPowerKey,
+    SchemeGuid,
+):
+    return powrprof.PowerSetActiveScheme(UserRootPowerKey, SchemeGuid)

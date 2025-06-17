@@ -4,6 +4,8 @@
 - [Styling](./Styling)
 - [YASB CLI](./CLI)
 - [FAQ](./FAQ)
+- [Contributing](./Contributing)
+- [Writing Widget](./Writing-Widget)
 - Widgets:
     - [Active Windows Title](./(Widget)-Active-Windows-Title)
     - [Applications](./(Widget)-Applications)
@@ -34,6 +36,7 @@
     - [Taskbar](./(Widget)-Taskbar)
     - [Pomodoro](./(Widget)-Pomodoro)
     - [Power Menu](./(Widget)-Power-Menu)
+    - [Power Plan](./(Widget)-Power-Plan)
     - [Recycle Bin](./(Widget)-Recycle-Bin)
     - [Update Check](./(Widget)-Update-Check)
     - [Visual Studio Code](./(Widget)-VSCode)
@@ -47,4 +50,3 @@
     - [Komorebi Layout](./(Widget)-Komorebi-Layout)
     - [Komorebi Stack](./(Widget)-Komorebi-Stack)
     - [Komorebi Workspaces](./(Widget)-Komorebi-Workspaces)
-- [Writing Widget](./Writing-Widget)
