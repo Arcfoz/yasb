@@ -76,7 +76,7 @@ def get_window_rect(hwnd: int) -> dict:
     }
 
 
-def is_window_maximised(hwnd: int) -> bool:
+def is_window_maximized(hwnd: int) -> bool:
     window_placement = GetWindowPlacement(hwnd)
     return window_placement[1] == SW_MAXIMIZE
 
@@ -95,6 +95,30 @@ def get_hwnd_info(hwnd: int) -> dict:
             "monitor_info": monitor_info,
             "rect": get_window_rect(hwnd),
         }
+
+
+def qmenu_rounded_corners(qwidget):
+    """
+    Set default Windows 11 rounded corners for a QMenu
+    This function uses the DWM API to set the window corner preference for a QMenu.
+    Windows 10 is not supported, as it does not have the DWM API for rounded corners.
+    """
+    try:
+        hwnd = int(qwidget.winId())
+        DWMWA_WINDOW_CORNER_PREFERENCE = 33
+        DWMWCP_ROUND = 2
+
+        preference = ctypes.wintypes.DWORD(DWMWCP_ROUND)
+        dwmapi.DwmSetWindowAttribute(
+            ctypes.wintypes.HWND(hwnd),
+            ctypes.wintypes.DWORD(DWMWA_WINDOW_CORNER_PREFERENCE),
+            ctypes.byref(preference),
+            ctypes.sizeof(preference),
+        )
+    except Exception:
+        # If we can't set the rounded corners, we just ignore the error
+        # This can happen if the DWM API is not available
+        pass
 
 
 def _open_startup_registry(access_flag: int):

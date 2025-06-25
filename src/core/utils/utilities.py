@@ -6,7 +6,7 @@ from typing import Any, cast
 import psutil
 from PyQt6.QtCore import QEvent, QPoint, Qt
 from PyQt6.QtGui import QColor, QScreen
-from PyQt6.QtWidgets import QApplication, QFrame, QGraphicsDropShadowEffect, QLabel, QWidget
+from PyQt6.QtWidgets import QApplication, QFrame, QGraphicsDropShadowEffect, QLabel, QMenu, QWidget
 from winrt.windows.data.xml.dom import XmlDocument
 from winrt.windows.ui.notifications import ToastNotification, ToastNotificationManager
 
@@ -152,7 +152,14 @@ class PopupWidget(QWidget):
         resizeEvent(event): Handle the resize event for the popup.
     """
 
-    def __init__(self, parent=None, blur=False, round_corners=False, round_corners_type="normal", border_color="None"):
+    def __init__(
+        self,
+        parent: QWidget,
+        blur: bool = False,
+        round_corners: bool = False,
+        round_corners_type: str = "normal",
+        border_color: str = "None",
+    ):
         super().__init__(parent)
 
         self.setWindowFlags(
@@ -245,6 +252,22 @@ class PopupWidget(QWidget):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.MouseButtonPress:
             global_pos = event.globalPosition().toPoint()
+
+            # Check if click is inside popup
+            if self.geometry().contains(global_pos):
+                return super().eventFilter(obj, event)
+
+            # Check if click is inside any visible QMenu child
+            for menu in self.findChildren(QMenu):
+                menu_global_geom = menu.geometry().translated(menu.mapToGlobal(QPoint(0, 0)))
+                if menu.isVisible() and menu_global_geom.contains(global_pos):
+                    return super().eventFilter(obj, event)
+
+            # Otherwise, close all open QMenus first
+            for menu in self.findChildren(QMenu):
+                if menu.isVisible():
+                    menu.close()
+
             if not self.geometry().contains(global_pos):
                 self.hide()
                 self.deleteLater()
@@ -260,16 +283,17 @@ class PopupWidget(QWidget):
             while bar_el and not hasattr(bar_el, "_autohide_bar"):
                 bar_el = bar_el.parent()
 
-            if bar_el:
+            if bar_el and bar_el._autohide_manager and bar_el._autohide_manager.is_enabled():
                 # Check if parent needs autohide
-                if bar_el._autohide_bar:
+                if bar_el._autohide_manager.is_enabled():
                     # Get current cursor position
                     from PyQt6.QtGui import QCursor
 
                     cursor_pos = QCursor.pos()
                     # If mouse is outside the bar, start the hide timer
                     if not bar_el.geometry().contains(cursor_pos):
-                        bar_el._hide_timer.start(bar_el._autohide_delay)
+                        if bar_el._autohide_manager._hide_timer:
+                            bar_el._autohide_manager._hide_timer.start(bar_el._autohide_manager._autohide_delay)
         except Exception:
             pass
 

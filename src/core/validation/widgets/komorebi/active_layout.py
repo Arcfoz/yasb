@@ -23,7 +23,8 @@ DEFAULTS = {
         "ultrawide_vertical_stack": "||=",
         "right_main_vertical_stack": "=||",
         "monocle": "[M]",
-        "maximised": "[X]",
+        "maximized": "[X]",
+        "maximised": "[X]",  # deprecated, use "maximized" instead
         "floating": "><>",
         "paused": "[P]",
         "tiling": "[T]",
@@ -55,7 +56,7 @@ ALLOWED_CALLBACKS = [
     "toggle_tiling",
     "toggle_float",
     "toggle_monocle",
-    "toggle_maximise",
+    "toggle_maximize",
     "toggle_pause",
     "toggle_layout_menu",
 ]
@@ -83,7 +84,8 @@ VALIDATION_SCHEMA = {
                 "default": DEFAULTS["layout_icons"]["right_main_vertical_stack"],
             },
             "monocle": {"type": "string", "default": DEFAULTS["layout_icons"]["monocle"]},
-            "maximised": {"type": "string", "default": DEFAULTS["layout_icons"]["maximised"]},
+            "maximized": {"type": "string", "default": DEFAULTS["layout_icons"]["maximized"]},
+            "maximised": {"type": "string", "default": DEFAULTS["layout_icons"]["maximised"]},  # deprecated
             "floating": {"type": "string", "default": DEFAULTS["layout_icons"]["floating"]},
             "paused": {"type": "string", "default": DEFAULTS["layout_icons"]["paused"]},
             "tiling": {"type": "string", "default": DEFAULTS["layout_icons"]["tiling"]},
