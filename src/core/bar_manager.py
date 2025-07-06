@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication
 from core.bar import Bar
 from core.config import get_config, get_stylesheet
 from core.event_service import EventService
+from core.global_state import set_bar_screens
 from core.utils.controller import reload_application
 from core.utils.utilities import get_screen_by_name
 from core.utils.widget_builder import WidgetBuilder
@@ -53,7 +54,10 @@ class BarManager(QObject):
             logging.error(f"Error loading config: {e}")
             return
         if config and (config != self.config):
-            if any(config[key] != self.config[key] for key in ["bars", "widgets", "komorebi", "debug", "env_file"]):
+            if any(
+                config[key] != self.config[key]
+                for key in ["bars", "widgets", "komorebi", "debug", "env_file", "update_check"]
+            ):
                 self.config = config
                 reload_application("Reloading Application because of config change.")
             else:
@@ -97,13 +101,14 @@ class BarManager(QObject):
                         logging.warning(f"Screen '{resolved_name}' from config not found among connected screens.")
                         continue
                     assigned_screens.add(resolved_name)
-
+        initialized_screens = set()
         for bar_name, bar_config in self.config["bars"].items():
             if bar_config["screens"] == ["*"]:
                 for screen in QApplication.screens():
                     if screen.name() in assigned_screens:
                         continue
                     self.create_bar(bar_config, bar_name, screen, init)
+                    initialized_screens.add(screen.name())
             else:
                 for screen_name in bar_config["screens"]:
                     resolved_name = primary_screen_name if screen_name == "primary" else screen_name
@@ -113,7 +118,8 @@ class BarManager(QObject):
                     screen = get_screen_by_name(resolved_name)
                     if screen:
                         self.create_bar(bar_config, bar_name, screen, init)
-
+                        initialized_screens.add(screen.name())
+        set_bar_screens(initialized_screens)
         self.run_listeners_in_threads()
         self._widget_builder.raise_alerts_if_errors_present()
 

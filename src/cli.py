@@ -30,6 +30,7 @@ from win32con import (
     OPEN_EXISTING,
 )
 
+from core.utils.utilities import app_data_path
 from core.utils.win32.bindings import (
     CloseHandle,
     CreateFile,
@@ -242,6 +243,14 @@ class CLIHandler:
         toggle_bar_parser = subparsers.add_parser("toggle-bar", help="Toggle the bar on a specific screen")
         toggle_bar_parser.add_argument("-s", "--screen", type=str, help="Screen name (optional)")
 
+        widget_toggle_parser = subparsers.add_parser("toggle-widget", help="Toggle a widget show/hide")
+        widget_toggle_parser.add_argument("widget_name", type=str, help="Name of the widget to toggle")
+        widget_toggle_parser.add_argument("-s", "--screen", type=str, help="Screen name (optional)")
+        widget_toggle_parser.add_argument("--follow-mouse", action="store_true", help="Follow mouse cursor (optional)")
+        widget_toggle_parser.add_argument(
+            "--follow-focus", action="store_true", help="Follow focused window (optional)"
+        )
+
         subparsers.add_parser("reset", help="Restore default config files and clear cache")
 
         subparsers.add_parser("help", help="Show help message")
@@ -301,6 +310,20 @@ class CLIHandler:
         elif args.command == "toggle-bar":
             screen_arg = f" --screen {args.screen}" if args.screen else ""
             self.send_command_to_application(f"toggle-bar{screen_arg}")
+            sys.exit(0)
+
+        elif args.command == "toggle-widget":
+            if not args.widget_name:
+                sys.exit(1)
+            if args.screen:
+                arg = f" --screen {args.screen}" if args.screen else ""
+            elif args.follow_mouse:
+                arg = " --follow-mouse"
+            elif args.follow_focus:
+                arg = " --follow-focus"
+            else:
+                arg = ""
+            self.send_command_to_application(f"toggle-widget {args.widget_name}{arg}")
             sys.exit(0)
 
         elif args.command == "update":
@@ -429,10 +452,10 @@ class CLIHandler:
                     except Exception as e:
                         print(f"Failed to delete {fpath}: {e}")
 
-            # Clear all files in LOCALDATA_FOLDER if it exists
-            LOCALDATA_FOLDER = Path(os.environ["LOCALAPPDATA"]) / "Yasb"
-            if LOCALDATA_FOLDER.exists() and LOCALDATA_FOLDER.is_dir():
-                for child in LOCALDATA_FOLDER.iterdir():
+            # Clear all files in app_data_folder if it exists
+            app_data_folder = app_data_path()
+            if app_data_folder.exists() and app_data_folder.is_dir():
+                for child in app_data_folder.iterdir():
                     try:
                         if child.is_file() or child.is_symlink():
                             child.unlink()
@@ -463,6 +486,7 @@ class CLIHandler:
                   show-bar                  Show the bar on all or a specific screen
                   hide-bar                  Hide the bar on all or a specific screen
                   toggle-bar                Toggle the bar on all or a specific screen
+                  toggle-widget             Toggle a widget show/hide
                   update                    Update the application
                   log                       Tail yasb process logs (cancel with Ctrl-C)
                   reset                     Restore default config files and clear cache
