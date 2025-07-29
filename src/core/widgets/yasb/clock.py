@@ -1,13 +1,17 @@
 import locale
 import re
-from datetime import datetime
+from datetime import date, datetime
 from itertools import cycle
+from typing import cast
 
+import holidays
 import pytz
 from PyQt6.QtCore import QDate, QLocale, Qt
-from PyQt6.QtWidgets import QCalendarWidget, QHBoxLayout, QLabel, QSizePolicy, QTableView, QVBoxLayout, QWidget
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import QCalendarWidget, QHBoxLayout, QLabel, QSizePolicy, QStyle, QTableView, QVBoxLayout, QWidget
 from tzlocal import get_localzone_name
 
+from core.utils.tooltip import set_tooltip
 from core.utils.utilities import PopupWidget, add_shadow, build_widget_label
 from core.utils.widgets.animation_manager import AnimationManager
 from core.validation.widgets.yasb.clock import VALIDATION_SCHEMA
@@ -15,14 +19,28 @@ from core.widgets.base import BaseWidget
 
 
 class CustomCalendar(QCalendarWidget):
-    def __init__(self, parent=None, timezone=None):
+    def __init__(
+        self,
+        parent=None,
+        timezone=None,
+        country_code=None,
+        subdivision=None,
+        show_holidays=True,
+        holiday_color=None,
+    ):
         super().__init__(parent)
         self.timezone = timezone
+        self.country_code = country_code
+        self.subdivision = subdivision
+        self.show_holidays = show_holidays
+        self.holiday_color = holiday_color
         self.setGridVisible(False)
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.setNavigationBarVisible(False)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-
+        self.setAutoFillBackground(False)
+        self._holidays = set()
+        self._current_year = None
         format = self.weekdayTextFormat(Qt.DayOfWeek.Monday)
         for day in range(Qt.DayOfWeek.Monday.value, Qt.DayOfWeek.Sunday.value + 1):
             self.setWeekdayTextFormat(Qt.DayOfWeek(day), format)
@@ -36,11 +54,45 @@ class CustomCalendar(QCalendarWidget):
             self.setLocale(qt_locale)
 
         self.update_calendar_display()
+        self._update_holidays_for_year(self.selectedDate().year())
+        self.currentPageChanged.connect(self._on_page_changed)
+
+    def _update_holidays_for_year(self, year):
+        self._holidays = set()
+        self._current_year = year
+        supported = set(holidays.list_supported_countries())
+        country = None
+        if (
+            self.country_code
+            and re.fullmatch(r"[A-Z]{2}", self.country_code.upper())
+            and self.country_code.upper() in supported
+        ):
+            country = self.country_code.upper()
+        if not country:
+            return
+        try:
+            h = holidays.country_holidays(country, years=[year], subdiv=self.subdivision)
+            self._holidays = set(h.keys())
+        except Exception:
+            self._holidays = set()
+
+    def _on_page_changed(self, year, month):
+        if year != self._current_year:
+            self._update_holidays_for_year(year)
 
     def paintCell(self, painter, rect, date):
         if date < self.minimumDate() or date > self.maximumDate():
-            return  # Skip drawing
+            return
         super().paintCell(painter, rect, date)
+        pydate = date.toPyDate()
+        if self.show_holidays and pydate in self._holidays:
+            painter.save()
+            color = QColor(self.holiday_color)
+            painter.setPen(color)
+            font = painter.font()
+            painter.setFont(font)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(date.day()))
+            painter.restore()
 
     def update_calendar_display(self):
         if self.timezone:
@@ -64,12 +116,12 @@ class ClockWidget(BaseWidget):
         animation: dict[str, str],
         container_padding: dict[str, int],
         callbacks: dict[str, str],
+        icons: dict[str, str] = None,
         label_shadow: dict = None,
         container_shadow: dict = None,
     ):
         super().__init__(update_interval, class_name=f"clock-widget {class_name}")
         self._locale = locale
-
         self._tooltip = tooltip
         self._active_tz = None
         self._timezones = cycle(timezones if timezones else [get_localzone_name()])
@@ -82,6 +134,10 @@ class ClockWidget(BaseWidget):
         self._label_alt_content = label_alt
         self._label_shadow = label_shadow
         self._container_shadow = container_shadow
+        self._icons = icons or {}
+        self._current_hour = None
+        self._country_code = self._calendar["country_code"] or self.get_country_code()
+        self._subdivision = self._calendar.get("subdivision")
         # Construct container
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
@@ -129,12 +185,31 @@ class ClockWidget(BaseWidget):
             widget.setVisible(self._show_alt_label)
         self._update_label()
 
+    def _get_icon_for_hour(self, hour: int) -> str:
+        key = f"clock_{hour:02d}"
+        icon = self._icons.get(key)
+        if icon is None and 13 <= hour <= 23:
+            fallback_key = f"clock_{hour - 12:02d}"
+            icon = self._icons.get(fallback_key, "")
+        return icon or ""
+
+    def _reload_css(self, label: QLabel):
+        style = cast(QStyle, label.style())
+        style.unpolish(label)
+        style.polish(label)
+        label.update()
+
     def _update_label(self):
         active_widgets = self._widgets_alt if self._show_alt_label else self._widgets
         active_label_content = self._label_alt_content if self._show_alt_label else self._label_content
         label_parts = re.split("(<span.*?>.*?</span>)", active_label_content)
         label_parts = [part for part in label_parts if part]
         widget_index = 0
+        now = datetime.now(pytz.timezone(self._active_tz))
+        current_hour = f"{now.hour:02d}"
+        hour_changed = self._current_hour != current_hour
+        if hour_changed:
+            self._current_hour = current_hour
         if self._locale:
             org_locale_time = locale.getlocale(locale.LC_TIME)
             try:
@@ -145,8 +220,16 @@ class ClockWidget(BaseWidget):
             part = part.strip()
             if part and widget_index < len(active_widgets) and isinstance(active_widgets[widget_index], QLabel):
                 if "<span" in part and "</span>" in part:
-                    icon = re.sub(r"<span.*?>|</span>", "", part).strip()
-                    active_widgets[widget_index].setText(icon)
+                    icon_placeholder = re.sub(r"<span.*?>|</span>", "", part).strip()
+                    if icon_placeholder == "{icon}":
+                        if hour_changed:
+                            icon = self._get_icon_for_hour(now.hour)
+                            active_widgets[widget_index].setText(icon)
+                            hour_class = f"clock_{current_hour}"
+                            active_widgets[widget_index].setProperty("class", f"icon {hour_class}")
+                            self._reload_css(active_widgets[widget_index])
+                    else:
+                        active_widgets[widget_index].setText(icon_placeholder)
                 else:
                     try:
                         if self._locale:
@@ -163,6 +246,10 @@ class ClockWidget(BaseWidget):
                     except Exception:
                         format_label_content = part
                     active_widgets[widget_index].setText(format_label_content)
+                    if hour_changed:
+                        hour_class = f"clock_{current_hour}"
+                        active_widgets[widget_index].setProperty("class", f"label {hour_class}")
+                        self._reload_css(active_widgets[widget_index])
                 widget_index += 1
         if self._locale:
             locale.setlocale(locale.LC_TIME, org_locale_time)
@@ -174,7 +261,7 @@ class ClockWidget(BaseWidget):
     def _next_timezone(self):
         self._active_tz = next(self._timezones)
         if self._tooltip:
-            self.setToolTip(self._active_tz)
+            set_tooltip(self, self._active_tz)
         self._update_label()
 
     def update_month_label(self, year, month):
@@ -196,6 +283,58 @@ class ClockWidget(BaseWidget):
         self.day_label.setText(qlocale.dayName(date.dayOfWeek()))
         self.month_label.setText(qlocale.monthName(date.month()))
         self.date_label.setText(date.toString("d"))
+        if self._calendar["show_week_numbers"]:
+            self.update_week_label(date)
+        if self._calendar["show_holidays"]:
+            self.update_holiday_label(date)
+
+    def update_week_label(self, qdate: QDate):
+        week_number = qdate.weekNumber()[0]
+        self.week_label.setText(f"Week {week_number}")
+
+    def update_holiday_label(self, qdate: QDate):
+        supported = set(holidays.list_supported_countries())
+        country = None
+        if (
+            self._country_code
+            and re.fullmatch(r"[A-Z]{2}", self._country_code.upper())
+            and self._country_code.upper() in supported
+        ):
+            country = self._country_code.upper()
+        if not country:
+            self.holiday_label.setText("")
+            return
+        try:
+            h = holidays.country_holidays(country, subdiv=self._subdivision)
+            dt = date(qdate.year(), qdate.month(), qdate.day())
+            holiday_name = h.get(dt)
+            if holiday_name:
+                self.holiday_label.setText(holiday_name)
+            else:
+                self.holiday_label.setText("")
+        except Exception:
+            self.holiday_label.setText("")
+
+    def get_country_code(self):
+        print("Retrieving country code based on locale or system settings.")
+        """Retrieve the country code based on the user's locale or system settings."""
+        if not self._calendar["show_holidays"]:
+            return None
+        import ctypes
+
+        try:
+            GetUserGeoID = ctypes.windll.kernel32.GetUserGeoID
+            geo_id = GetUserGeoID(16)
+            buf = ctypes.create_unicode_buffer(3)
+            GetGeoInfoW = ctypes.windll.kernel32.GetGeoInfoW
+            result = GetGeoInfoW(geo_id, 4, buf, len(buf), 0)
+            country_code = buf.value if result else ""
+            if country_code:
+                return country_code
+        except Exception:
+            pass
+
+        return None
 
     def show_calendar(self):
         self._yasb_calendar = PopupWidget(
@@ -238,9 +377,31 @@ class ClockWidget(BaseWidget):
         self.date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         date_layout.addWidget(self.date_label)
 
+        if self._calendar["show_week_numbers"]:
+            week_number = QDate(datetime_now.year, datetime_now.month, datetime_now.day).weekNumber()[0]
+            self.week_label = QLabel(f"Week {week_number}")
+            self.week_label.setProperty("class", "week-label")
+            self.week_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            date_layout.addWidget(self.week_label)
+            self.update_week_label(QDate(datetime_now.year, datetime_now.month, datetime_now.day))
+        if self._calendar["show_holidays"]:
+            self.holiday_label = QLabel("")
+            self.holiday_label.setProperty("class", "holiday-label")
+            self.holiday_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.holiday_label.setWordWrap(True)
+            date_layout.addWidget(self.holiday_label)
+            self.update_holiday_label(QDate(datetime_now.year, datetime_now.month, datetime_now.day))
+
         layout.addLayout(date_layout)
 
-        self.calendar = CustomCalendar(self, self._active_tz)
+        self.calendar = CustomCalendar(
+            self,
+            self._active_tz,
+            self._country_code,
+            subdivision=self._subdivision,
+            show_holidays=self._calendar["show_holidays"],
+            holiday_color=self._calendar["holiday_color"],
+        )
         self.calendar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
         current_year = QDate.currentDate().year()

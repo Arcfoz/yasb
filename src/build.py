@@ -46,6 +46,8 @@ build_options = {
         "core.widgets.yasb.power_plan",
         "core.widgets.yasb.grouper",
         "core.widgets.yasb.todo",
+        "core.widgets.yasb.ai_chat",
+        "core.widgets.yasb.gpu",
         "core.widgets.komorebi.control",
         "core.widgets.komorebi.active_layout",
         "core.widgets.komorebi.stack",
@@ -61,6 +63,7 @@ build_options = {
     "build_exe": "dist",
     "include_msvcr": True,
     "includes": [
+        "holidays.countries",
         "winrt.windows.ui.notifications",
         "winrt.windows.ui.notifications.management",
         "winrt.windows.data.xml.dom",

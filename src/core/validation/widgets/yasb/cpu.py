@@ -7,6 +7,11 @@ DEFAULTS = {
     "animation": {"enabled": True, "type": "fadeInOut", "duration": 200},
     "container_padding": {"top": 0, "left": 0, "bottom": 0, "right": 0},
     "callbacks": {"on_left": "toggle_label", "on_middle": "do_nothing", "on_right": "do_nothing"},
+    "cpu_thresholds": {
+        "low": 25,
+        "medium": 50,
+        "high": 90,
+    },
 }
 
 VALIDATION_SCHEMA = {
@@ -64,6 +69,26 @@ VALIDATION_SCHEMA = {
         },
         "default": {"enabled": False, "color": "black", "offset": [1, 1], "radius": 3},
     },
+    "progress_bar": {
+        "type": "dict",
+        "default": {"enabled": False},
+        "required": False,
+        "schema": {
+            "enabled": {"type": "boolean", "default": False},
+            "size": {"type": "integer", "default": 18, "min": 8, "max": 64},
+            "thickness": {"type": "integer", "default": 3, "min": 1, "max": 10},
+            "color": {
+                "anyof": [{"type": "string"}, {"type": "list", "schema": {"type": "string"}}],
+                "default": "#00C800",
+            },
+            "background_color": {"type": "string", "default": "#3C3C3C"},
+            "position": {"type": "string", "allowed": ["left", "right"], "default": "left"},
+            "animation": {
+                "type": "boolean",
+                "default": True,
+            },
+        },
+    },
     "callbacks": {
         "type": "dict",
         "schema": {
@@ -81,5 +106,15 @@ VALIDATION_SCHEMA = {
             },
         },
         "default": DEFAULTS["callbacks"],
+    },
+    "cpu_thresholds": {
+        "type": "dict",
+        "required": False,
+        "schema": {
+            "low": {"type": "integer", "default": DEFAULTS["cpu_thresholds"]["low"], "min": 0, "max": 100},
+            "medium": {"type": "integer", "default": DEFAULTS["cpu_thresholds"]["medium"], "min": 0, "max": 100},
+            "high": {"type": "integer", "default": DEFAULTS["cpu_thresholds"]["high"], "min": 0, "max": 100},
+        },
+        "default": DEFAULTS["cpu_thresholds"],
     },
 }

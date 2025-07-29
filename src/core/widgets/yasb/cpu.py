@@ -2,11 +2,10 @@ import logging
 import re
 from collections import deque
 
-import psutil
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-from core.utils.utilities import add_shadow, build_widget_label
+from core.utils.utilities import add_shadow, build_progress_widget, build_widget_label
 from core.utils.widgets.animation_manager import AnimationManager
 from core.validation.widgets.yasb.cpu import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
@@ -29,8 +28,10 @@ class CpuWidget(BaseWidget):
         animation: dict[str, str],
         container_padding: dict[str, int],
         callbacks: dict[str, str],
+        cpu_thresholds: dict[str, int],
         label_shadow: dict = None,
         container_shadow: dict = None,
+        progress_bar: dict = None,
     ):
         super().__init__(class_name="cpu-widget")
         self._histogram_icons = histogram_icons
@@ -43,7 +44,12 @@ class CpuWidget(BaseWidget):
         self._padding = container_padding
         self._label_shadow = label_shadow
         self._container_shadow = container_shadow
-        # Construct container
+        self._cpu_thresholds = cpu_thresholds
+        self._progress_bar = progress_bar
+
+        self.progress_widget = None
+        self.progress_widget = build_progress_widget(self, self._progress_bar)
+
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
         self._widget_container_layout.setContentsMargins(
@@ -75,7 +81,30 @@ class CpuWidget(BaseWidget):
             CpuWidget._shared_timer.timeout.connect(CpuWidget._notify_instances)
             CpuWidget._shared_timer.start()
 
-        CpuWidget._notify_instances()
+        self._show_placeholder()
+
+    def _show_placeholder(self):
+        """Display placeholder (zero/default) CPU data without any psutil calls."""
+
+        class DummyFreq:
+            min = 0
+            max = 0
+            current = 0
+
+        class DummyStats:
+            ctx_switches = 0
+            interrupts = 0
+            soft_interrupts = 0
+            syscalls = 0
+
+        cpu_freq = DummyFreq()
+        cpu_stats = DummyStats()
+        current_perc = 0
+        logical = 1  # Assume at least 1 core for placeholder
+        cores_perc = [0] * logical
+        cpu_cores = {"physical": 1, "total": 1}
+
+        self._update_label(cpu_freq, cpu_stats, current_perc, cores_perc, cpu_cores)
 
     @classmethod
     def _notify_instances(cls):
@@ -84,6 +113,8 @@ class CpuWidget(BaseWidget):
             return
 
         try:
+            import psutil
+
             cpu_freq = psutil.cpu_freq()
             cpu_stats = psutil.cpu_stats()
             current_perc = psutil.cpu_percent()
@@ -119,15 +150,11 @@ class CpuWidget(BaseWidget):
             "histograms": {
                 "cpu_freq": "".join(
                     [self._get_histogram_bar(freq, cpu_freq.min, cpu_freq.max) for freq in self._cpu_freq_history]
-                )
-                .encode("utf-8")
-                .decode("unicode_escape"),
-                "cpu_percent": "".join([self._get_histogram_bar(percent, 0, 100) for percent in self._cpu_perc_history])
-                .encode("utf-8")
-                .decode("unicode_escape"),
-                "cores": "".join([self._get_histogram_bar(percent, 0, 100) for percent in cores_perc])
-                .encode("utf-8")
-                .decode("unicode_escape"),
+                ),
+                "cpu_percent": "".join(
+                    [self._get_histogram_bar(percent, 0, 100) for percent in self._cpu_perc_history]
+                ),
+                "cores": "".join([self._get_histogram_bar(percent, 0, 100) for percent in cores_perc]),
             },
         }
 
@@ -136,6 +163,14 @@ class CpuWidget(BaseWidget):
         label_parts = re.split("(<span.*?>.*?</span>)", active_label_content)
         label_parts = [part for part in label_parts if part]
         widget_index = 0
+
+        if self._progress_bar["enabled"] and self.progress_widget:
+            if self._widget_container_layout.indexOf(self.progress_widget) == -1:
+                self._widget_container_layout.insertWidget(
+                    0 if self._progress_bar["position"] == "left" else self._widget_container_layout.count(),
+                    self.progress_widget,
+                )
+            self.progress_widget.set_value(current_perc)
 
         for part in label_parts:
             part = part.strip()
@@ -148,6 +183,9 @@ class CpuWidget(BaseWidget):
                     formatted_text = part.format(info=cpu_info)
                     active_widgets[widget_index].setText(formatted_text)
                     active_widgets[widget_index].setProperty("class", label_class)
+                    active_widgets[widget_index].setProperty(
+                        "class", f"{label_class} status-{self._get_cpu_threshold(current_perc)}"
+                    )
                     active_widgets[widget_index].setStyleSheet("")
                 widget_index += 1
 
@@ -167,3 +205,13 @@ class CpuWidget(BaseWidget):
         bar_index = int((num - num_min) / (num_max - num_min) * (len(self._histogram_icons) - 1))
         bar_index = min(max(bar_index, 0), len(self._histogram_icons) - 1)
         return self._histogram_icons[bar_index]
+
+    def _get_cpu_threshold(self, cpu_percent) -> str:
+        if cpu_percent <= self._cpu_thresholds["low"]:
+            return "low"
+        elif self._cpu_thresholds["low"] < cpu_percent <= self._cpu_thresholds["medium"]:
+            return "medium"
+        elif self._cpu_thresholds["medium"] < cpu_percent <= self._cpu_thresholds["high"]:
+            return "high"
+        elif self._cpu_thresholds["high"] < cpu_percent:
+            return "critical"

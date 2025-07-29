@@ -2,6 +2,7 @@ DEFAULTS = {
     "label": "\uf4bc {virtual_mem_free}/{virtual_mem_total}",
     "label_alt": "\uf4bc VIRT: {virtual_mem_percent}% SWAP: {swap_mem_percent}%",
     "update_interval": 5000,
+    "histogram_icons": ["\u2581", "\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"],
     "animation": {"enabled": True, "type": "fadeInOut", "duration": 200},
     "container_padding": {"top": 0, "left": 0, "bottom": 0, "right": 0},
     "callbacks": {"on_left": "toggle_label", "on_middle": "do_nothing", "on_right": "do_nothing"},
@@ -16,6 +17,14 @@ VALIDATION_SCHEMA = {
     "label": {"type": "string", "default": DEFAULTS["label"]},
     "label_alt": {"type": "string", "default": DEFAULTS["label_alt"]},
     "update_interval": {"type": "integer", "default": DEFAULTS["update_interval"], "min": 1000, "max": 60000},
+    "histogram_icons": {
+        "type": "list",
+        "required": False,
+        "default": DEFAULTS["histogram_icons"],
+        "minlength": 9,
+        "maxlength": 9,
+        "schema": {"type": "string"},
+    },
     "memory_thresholds": {
         "type": "dict",
         "required": False,
@@ -68,6 +77,26 @@ VALIDATION_SCHEMA = {
             "radius": {"type": "integer", "default": 3},
         },
         "default": {"enabled": False, "color": "black", "offset": [1, 1], "radius": 3},
+    },
+    "progress_bar": {
+        "type": "dict",
+        "default": {"enabled": False},
+        "required": False,
+        "schema": {
+            "enabled": {"type": "boolean", "default": False},
+            "size": {"type": "integer", "default": 18, "min": 8, "max": 64},
+            "thickness": {"type": "integer", "default": 3, "min": 1, "max": 10},
+            "color": {
+                "anyof": [{"type": "string"}, {"type": "list", "schema": {"type": "string"}}],
+                "default": "#00C800",
+            },
+            "background_color": {"type": "string", "default": "#3C3C3C"},
+            "position": {"type": "string", "allowed": ["left", "right"], "default": "left"},
+            "animation": {
+                "type": "boolean",
+                "default": True,
+            },
+        },
     },
     "callbacks": {
         "type": "dict",

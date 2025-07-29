@@ -8,7 +8,8 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QWheelEvent
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSlider, QVBoxLayout, QWidget
 
-from core.utils.utilities import PopupWidget, add_shadow, build_widget_label
+from core.utils.tooltip import set_tooltip
+from core.utils.utilities import PopupWidget, add_shadow, build_progress_widget, build_widget_label
 from core.utils.widgets.animation_manager import AnimationManager
 from core.utils.win32.utilities import get_monitor_info
 from core.validation.widgets.yasb.brightness import VALIDATION_SCHEMA
@@ -47,6 +48,7 @@ class BrightnessWidget(BaseWidget):
         callbacks: dict[str, str],
         label_shadow: dict = None,
         container_shadow: dict = None,
+        progress_bar: dict = None,
     ):
         super().__init__(class_name="brightness-widget")
         self._show_alt_label = False
@@ -70,6 +72,10 @@ class BrightnessWidget(BaseWidget):
         self._animation = animation
         self._label_shadow = label_shadow
         self._container_shadow = container_shadow
+        self._progress_bar = progress_bar
+
+        self.progress_widget = None
+        self.progress_widget = build_progress_widget(self, self._progress_bar)
 
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
@@ -164,13 +170,22 @@ class BrightnessWidget(BaseWidget):
             if percent is not None:
                 icon = self.get_brightness_icon(percent)
                 if self._tooltip:
-                    self.setToolTip(f"Brightness {percent}%")
+                    set_tooltip(self, f"Brightness {percent}%")
             else:
                 percent, icon = 0, "not supported"
         except Exception:
             percent, icon = 0, "not supported"
 
         label_options = {"{icon}": icon, "{percent}": percent}
+
+        if self._progress_bar["enabled"] and self.progress_widget:
+            if self._widget_container_layout.indexOf(self.progress_widget) == -1:
+                self._widget_container_layout.insertWidget(
+                    0 if self._progress_bar["position"] == "left" else self._widget_container_layout.count(),
+                    self.progress_widget,
+                )
+            self.progress_widget.set_value(percent)
+
         for part in label_parts:
             part = part.strip()
             if part:

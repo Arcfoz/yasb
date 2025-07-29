@@ -1,12 +1,11 @@
 import logging
 import re
 
-import psutil
 from humanize import naturalsize
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
-from core.utils.utilities import add_shadow, build_widget_label
+from core.utils.utilities import add_shadow, build_progress_widget, build_widget_label
 from core.utils.widgets.animation_manager import AnimationManager
 from core.validation.widgets.yasb.memory import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
@@ -23,15 +22,18 @@ class MemoryWidget(BaseWidget):
         label: str,
         label_alt: str,
         update_interval: int,
+        histogram_icons: list[str],
         animation: dict[str, str],
         callbacks: dict[str, str],
         memory_thresholds: dict[str, int],
         container_padding: dict[str, int],
         label_shadow: dict = None,
         container_shadow: dict = None,
+        progress_bar: dict = None,
     ):
         super().__init__(class_name="memory-widget")
         self._memory_thresholds = memory_thresholds
+        self._histogram_icons = histogram_icons
         self._show_alt_label = False
         self._label_content = label
         self._label_alt_content = label_alt
@@ -39,6 +41,10 @@ class MemoryWidget(BaseWidget):
         self._padding = container_padding
         self._label_shadow = label_shadow
         self._container_shadow = container_shadow
+        self._progress_bar = progress_bar
+
+        self.progress_widget = None
+        self.progress_widget = build_progress_widget(self, self._progress_bar)
         # Construct container
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
@@ -71,7 +77,22 @@ class MemoryWidget(BaseWidget):
             MemoryWidget._shared_timer.timeout.connect(MemoryWidget._notify_instances)
             MemoryWidget._shared_timer.start()
 
-        MemoryWidget._notify_instances()
+        self._show_placeholder()
+
+    def _show_placeholder(self):
+        """Display placeholder (zero/default) memory data without any psutil calls."""
+
+        class DummyMem:
+            free = 0
+            percent = 0
+            total = 0
+            available = 0
+            used = 0
+
+        virtual_mem = DummyMem()
+        swap_mem = DummyMem()
+
+        self._update_label(virtual_mem, swap_mem)
 
     @classmethod
     def _notify_instances(cls):
@@ -80,6 +101,8 @@ class MemoryWidget(BaseWidget):
             return
 
         try:
+            import psutil
+
             virtual_mem = psutil.virtual_memory()
             swap_mem = psutil.swap_memory()
 
@@ -112,7 +135,17 @@ class MemoryWidget(BaseWidget):
             "{swap_mem_free}": naturalsize(swap_mem.free, True, True),
             "{swap_mem_percent}": swap_mem.percent,
             "{swap_mem_total}": naturalsize(swap_mem.total, True, True),
+            "{histogram}": "".join([self._get_histogram_bar(virtual_mem.percent, 0, 100)]),
         }
+
+        if self._progress_bar["enabled"] and self.progress_widget:
+            if self._widget_container_layout.indexOf(self.progress_widget) == -1:
+                self._widget_container_layout.insertWidget(
+                    0 if self._progress_bar["position"] == "left" else self._widget_container_layout.count(),
+                    self.progress_widget,
+                )
+            self.progress_widget.set_value(virtual_mem.percent)
+
         for part in label_parts:
             part = part.strip()
             for fmt_str, value in label_options.items():
@@ -151,3 +184,10 @@ class MemoryWidget(BaseWidget):
             return "high"
         elif self._memory_thresholds["high"] < virtual_memory_percent:
             return "critical"
+
+    def _get_histogram_bar(self, num, num_min, num_max):
+        if num_max == num_min:
+            return self._histogram_icons[0]
+        bar_index = int((num - num_min) / (num_max - num_min) * (len(self._histogram_icons) - 1))
+        bar_index = min(max(bar_index, 0), len(self._histogram_icons) - 1)
+        return self._histogram_icons[bar_index]

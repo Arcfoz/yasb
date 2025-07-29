@@ -8,10 +8,12 @@
 | `update_interval` | integer | `60`                                                                  | The interval in seconds to update the disk widget. Must be between 0 and 3600. |
 | `group_label` | dict | `{'volume_labels': ["C"], 'show_label_name': True, 'blur': True, 'round_corners': True, 'round_corners_type': 'normal','border_color': 'System', 'alignment': 'right', 'direction': 'down', 'offset_top': 6, 'offset_left': 0}` | Group labels for multiple disks. This will show the labels of multiple disks in a popup window. |
 | `callbacks`       | dict    | `{'on_left': 'do_nothing', 'on_middle': 'do_nothing', 'on_right': "exec explorer C:\\"}` | Callbacks for mouse events. |
+| `disk_thresholds` | dict  | `{'low': 25, 'medium': 50, 'high': 90}`                                 | Thresholds for Disk usage levels. |
 | `container_padding`  | dict | `{'top': 0, 'left': 0, 'bottom': 0, 'right': 0}`      | Explicitly set padding inside widget container. |
 | `animation`         | dict    | `{'enabled': True, 'type': 'fadeInOut', 'duration': 200}`               | Animation settings for the widget.                                          |
 | `container_shadow`   | dict   | `None`                  | Container shadow options.                       |
 | `label_shadow`         | dict   | `None`                  | Label shadow options.                 |
+| `progress_bar`       | dict    | `{'enabled': False, 'position': 'left', 'size': 14, 'thickness': 2, 'color': '#57948a', animation: True}` | Progress bar settings.    |
 
 ## Example Configuration
 
@@ -41,6 +43,10 @@ disk:
         color: "black"
         radius: 3
         offset: [ 1, 1 ]
+      disk_thresholds:
+          low: 25
+          medium: 50
+          high: 90
 ```
 
 ## Description of Options
@@ -50,6 +56,7 @@ disk:
 - **volume_label:** Partition/volume which you want to show in the bar.
 - **decimal_display:** The number of decimal to show, defaul 1 (min 0 max 3).
 - **update_interval:** The interval in seconds to update the disk widget. Must be between 0 and 3600.
+- **disk_thresholds:** A dictionary specifying the thresholds for disk usage levels. The keys are `low`, `medium`, and `high`, and the values are the percentage thresholds.
 - **group_label:** Group labels for multiple disks. This will show the labels of multiple disks in a popup window.
   - **volume_labels:** List of volume labels to show in the group label.
   - **show_label_name:** Show the label name in the group label.
@@ -66,6 +73,14 @@ disk:
 - **animation:** A dictionary specifying the animation settings for the widget. It contains three keys: `enabled`, `type`, and `duration`. The `type` can be `fadeInOut` and the `duration` is the animation duration in milliseconds.
 - **container_shadow:** Container shadow options.
 - **label_shadow:** Label shadow options.
+- **progress_bar**: A dictionary containing settings for the progress bar. It includes:
+  - **enabled**: Whether the progress bar is enabled.
+  - **position**: The position of the progress bar, either "left" or "right".
+  - **size**: The size of the progress bar.
+  - **thickness**: The thickness of the progress bar.
+  - **color**: The color of the progress bar. Color can be single color or gradient. For example, `color: "#57948a"` or `color: ["#57948a", "#ff0000"]"` for a gradient.
+  - **background_color**: The background color of the progress bar.
+  - **animation**: Whether to enable smooth change of the progress bar value.
 
 ## Widget Style
 ```css
@@ -81,6 +96,9 @@ disk:
 .disk-group-label-size {}
 .disk-group-label-bar {}
 .disk-group-label-bar::chunk {}
+
+/* Disk progress bar styles if enabled */
+.disk-widget .progress-circle {} 
 ```
 
 ## Example Style for Group Label
@@ -128,7 +146,6 @@ disk:
         label: "<span>\uf473</span>"
         label_alt: "<span>\uf473</span>"
         group_label:
-          enabled: true
           volume_labels: ["C", "D", "E", "F"]
           show_label_name: true 
           blur: True
