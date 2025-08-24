@@ -13,7 +13,8 @@ from core.event_service import EventService
 from core.utils.utilities import add_shadow
 from core.utils.widgets.komorebi.client import KomorebiClient
 from core.utils.win32.app_icons import get_window_icon
-from core.utils.win32.utilities import get_monitor_hwnd, get_process_info
+from core.utils.win32.utilities import get_monitor_hwnd
+from core.utils.win32.window_actions import close_application
 from core.validation.widgets.komorebi.stack import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
 from settings import DEBUG
@@ -76,6 +77,8 @@ class WindowButton(QFrame):
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             self.focus_stack_window()
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            self.close_stack_window()
 
     def update_visible_buttons(self):
         visible_buttons = [btn for btn in self.parent_widget._window_buttons if btn.isVisible()]
@@ -115,6 +118,10 @@ class WindowButton(QFrame):
                 # self.animate_buttons()
         except Exception:
             logging.exception(f"Failed to focus stack window at index {self.window_index}")
+
+    def close_stack_window(self):
+        hwnd = self.parent_widget._komorebi_windows[self.window_index]["hwnd"]
+        close_application(hwnd)
 
     def animate_buttons(self, duration=200, step=30):
         # Store the initial width if not already stored (to enable reverse animations)
@@ -235,14 +242,14 @@ class StackWidget(BaseWidget):
         add_shadow(self._no_window_text, self._label_shadow)
         self._no_window_text.setProperty("class", "no-window")
         # Construct container which holds windows buttons
-        self._widget_container_layout: QHBoxLayout = QHBoxLayout()
+        self._widget_container_layout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
         self._widget_container_layout.setContentsMargins(
             self._padding["left"], self._padding["top"], self._padding["right"], self._padding["bottom"]
         )
         self._widget_container_layout.addWidget(self._offline_text)
         self._widget_container_layout.addWidget(self._no_window_text)
-        self._widget_container: QWidget = QWidget()
+        self._widget_container = QFrame()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
         add_shadow(self._widget_container, self._container_shadow)
@@ -254,7 +261,6 @@ class StackWidget(BaseWidget):
         self._reverse_scroll_direction = reverse_scroll_direction
         self._icon_cache = dict()
         self.dpi = None
-        self._icon_update_retry_count = 0
 
         self._hide_no_window_text()
         self._register_signals_and_events()
@@ -266,6 +272,19 @@ class StackWidget(BaseWidget):
         self._event_service.register_event(KomorebiEvent.KomorebiConnect, self.k_signal_connect)
         self._event_service.register_event(KomorebiEvent.KomorebiDisconnect, self.k_signal_disconnect)
         self._event_service.register_event(KomorebiEvent.KomorebiUpdate, self.k_signal_update)
+        # Unregister on widget destruction to prevent late emits
+        try:
+            self.destroyed.connect(self._on_destroyed)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    def _on_destroyed(self, *args):
+        try:
+            self._event_service.unregister_event(KomorebiEvent.KomorebiConnect, self.k_signal_connect)
+            self._event_service.unregister_event(KomorebiEvent.KomorebiDisconnect, self.k_signal_disconnect)
+            self._event_service.unregister_event(KomorebiEvent.KomorebiUpdate, self.k_signal_update)
+        except Exception:
+            pass
 
     def _reset(self):
         self._komorebi_state = None
@@ -532,29 +551,22 @@ class StackWidget(BaseWidget):
 
     def _get_app_icon(self, window_index: int, ignore_cache: bool) -> QPixmap | None:
         try:
+            hwnd = None
             hwnd = self._komorebi_windows[window_index]["hwnd"]
-            process = get_process_info(hwnd)
-            pid = process["pid"]
             self.dpi = self.screen().devicePixelRatio()
-            cache_key = (hwnd, pid, self.dpi)
+            cache_key = (hwnd, self.dpi)
 
             if cache_key in self._icon_cache and not ignore_cache:
                 icon_img = self._icon_cache[cache_key]
             else:
                 icon_img = get_window_icon(hwnd)
                 if icon_img:
-                    self._icon_update_retry_count = 0
                     icon_img = icon_img.resize(
                         (int(self._icon_size * self.dpi), int(self._icon_size * self.dpi)), Image.LANCZOS
                     ).convert("RGBA")
                     self._icon_cache[cache_key] = icon_img
-                elif process["name"] == "ApplicationFrameHost.exe" and window_index == self._curr_window_index:
-                    if self._icon_update_retry_count < 10:
-                        self._icon_update_retry_count += 1
-                        QTimer.singleShot(100, lambda: self._get_app_icon(window_index, ignore_cache))
-                    else:
-                        self._icon_update_retry_count = 0
-
+            if not icon_img:
+                return None
             if icon_img:
                 qimage = QImage(icon_img.tobytes(), icon_img.width, icon_img.height, QImage.Format.Format_RGBA8888)
                 pixmap = QPixmap.fromImage(qimage)
@@ -566,5 +578,5 @@ class StackWidget(BaseWidget):
 
         except Exception:
             if DEBUG:
-                logging.exception(f"Failed to get icons for window with HWND {hwnd}")
+                logging.exception(f"Failed to get icons for window with HWND {hwnd if hwnd is not None else 'unknown'}")
             return None

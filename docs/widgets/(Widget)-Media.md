@@ -4,6 +4,7 @@
 | -------------------------             | --------- | ---------                                                 | -------------------------------------                              |
 | `label`                               | string    |                                                           | The main label format for the media widget.                        |
 | `label_alt`                           | string    |                                                           | The alternative label format for the media widget.                 |
+| `class_name`                          | string  | `""`                                                        | The custom CSS class name for the widget.                          |
 | `label_shadow`                        | boolean   | false                                                     | Whether to show a shadow effect on the label.                      |
 | `max_field_size`                      | dict      |                                                           | Maximum field sizes for labels.                                    |
 | `max_field_size.label`                | integer   | 20                                                        | Maximum size for the main label.                                   |
@@ -24,8 +25,7 @@
 | `icons.next_track`                    | string    | `\uf051`                                                  | Icon for the next track button.                                    |
 | `icons.play`                          | string    | `\uf04b`                                                  | Icon for the play button.                                          |
 | `icons.pause`                         | string    | `\uf04c`                                                  | Icon for the pause button.                                         |
-| `animation`                           | dict      | `{'enabled': True, 'type': 'fadeInOut', 'duration': 200}` | Animation settings for the widget.                                 |
-| `container_padding`                   | dict      | `{'top': 0, 'left': 0, 'bottom': 0, 'right': 0}`          | Explicitly set padding inside widget container.                    |
+| `animation`                           | dict      | `{'enabled': true, 'type': 'fadeInOut', 'duration': 200}` | Animation settings for the widget.                                 |
 | `container_shadow`                    | dict      | `None`                                                    | Container shadow options.                                          |
 | `label_shadow`                        | dict      | `None`                                                    | Label shadow options.                                              |
 | `media_menu`                          | dict      | `None`                                                    | Media menu popup.                                                  |
@@ -106,6 +106,7 @@ media:
 ## Description of Options
 - **label:** The format string for the media label. You can use placeholders like `{title}` and `{artist}` to dynamically insert media information.
 - **label_alt:** The alternative format string for the media label. Useful for displaying additional media details.
+- **class_name:** The CSS class name for the widget. This allows you to apply custom styles to the widget. (optional)
 - **label_shadow:** Whether to show a shadow effect on the label. This can enhance the visibility of the label against different backgrounds.
 - **hide_empty:** Whether to hide the widget when there is no media information available.
 - **callbacks:** A dictionary specifying the callbacks for mouse events. The keys are `on_left`, `on_middle`, `on_right`. Available callbacks are `toggle_label`, `do_nothing`, and `toggle_play_pause`.
@@ -133,7 +134,6 @@ media:
 - **thumbnail_edge_fade:** Whether to apply an edge fade effect to the thumbnail. This can create a smoother transition between the thumbnail and the background.
 - **icons:** Icons for the media controls.
 - **animation:** A dictionary specifying the animation settings for the widget. It contains three keys: `enabled`, `type`, and `duration`. The `type` can be `fadeInOut` and the `duration` is the animation duration in milliseconds.
-- **container_padding**: Explicitly set padding inside widget container. Use this option to set padding inside the widget container. You can set padding for top, left, bottom and right sides of the widget container.
 - **container_shadow:** Container shadow options.
 - **label_shadow:** Label shadow options.
 - **media_menu:** A dictionary specifying the media menu popup options. It contains keys for blur, round corners, border color, alignment, direction, offsets, thumbnail corner radius, thumbnail size, max title size, max artist size, and show source.
