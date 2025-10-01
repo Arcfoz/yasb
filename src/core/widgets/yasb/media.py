@@ -106,7 +106,7 @@ class MediaWidget(BaseWidget):
         # Add the container to the main widget layout
         self.widget_layout.addWidget(self._widget_container)
         if self._hide_empty:
-            self._widget_frame.hide()
+            self.hide()
         # Make a grid box to overlay the text and thumbnail
         self.thumbnail_box = QGridLayout()
 
@@ -664,7 +664,7 @@ class MediaWidget(BaseWidget):
 
         if has_session:
             # If media is not None, we show the frame
-            self._widget_frame.show()
+            self.show()
 
             # If we do not only have controls, make sure the label is shown
             if not self._controls_only:
@@ -691,7 +691,7 @@ class MediaWidget(BaseWidget):
 
             # If we want to hide the widget when no music is playing, hide it!
             if self._hide_empty:
-                self._widget_frame.hide()
+                self.hide()
 
     @QtCore.pyqtSlot(GlobalSystemMediaTransportControlsSessionPlaybackInfo)
     def _on_playback_info_changed(self, playback_info: GlobalSystemMediaTransportControlsSessionPlaybackInfo):
@@ -722,12 +722,9 @@ class MediaWidget(BaseWidget):
                 Qt.CursorShape.PointingHandCursor if is_next_enabled else Qt.CursorShape.PointingHandCursor
             )
 
-            self._prev_label.style().unpolish(self._prev_label)
-            self._prev_label.style().polish(self._prev_label)
-            self._play_label.style().unpolish(self._play_label)
-            self._play_label.style().polish(self._play_label)
-            self._next_label.style().unpolish(self._next_label)
-            self._next_label.style().polish(self._next_label)
+            self._prev_label.setStyleSheet("")
+            self._play_label.setStyleSheet("")
+            self._next_label.setStyleSheet("")
 
         # Update popup if it's currently open
         try:
