@@ -1,6 +1,6 @@
 import ctypes
 import logging
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import comtypes
 from PIL import Image, ImageChops
@@ -13,7 +13,7 @@ from PyQt6.QtGui import QPixmap, QWheelEvent
 from PyQt6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QSlider, QVBoxLayout
 from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionPlaybackInfo
 
-from core.utils.utilities import PopupWidget, ScrollingLabel, add_shadow
+from core.utils.utilities import PopupWidget, ScrollingLabel, add_shadow, refresh_widget_style
 from core.utils.widgets.animation_manager import AnimationManager
 from core.utils.widgets.media.aumid_process import get_process_name_for_aumid
 from core.utils.widgets.media.media import WindowsMedia
@@ -22,7 +22,8 @@ from core.utils.widgets.media.source_apps import (
     get_source_app_display_name,
     get_source_app_mapping,
 )
-from core.utils.win32.app_aumid import (
+from core.utils.widgets.media.tokenizer import clean_string
+from core.utils.win32.aumid import (
     ERROR_INSUFFICIENT_BUFFER,
     PROCESS_QUERY_LIMITED_INFORMATION,
     CloseHandle,
@@ -32,6 +33,8 @@ from core.utils.win32.app_aumid import (
 from core.validation.widgets.yasb.media import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
 from settings import DEBUG
+
+FieldTypes = Literal["default", "popup_title", "popup_artist"]
 
 
 class MediaWidget(BaseWidget):
@@ -49,6 +52,7 @@ class MediaWidget(BaseWidget):
         self,
         label: str,
         label_alt: str,
+        separator: str,
         class_name: str,
         hide_empty: bool,
         callbacks: dict[str, str],
@@ -74,6 +78,7 @@ class MediaWidget(BaseWidget):
         super().__init__(class_name=f"media-widget {class_name}")
         self._label_content = label
         self._label_alt_content = label_alt
+        self._separator = separator
 
         self._max_field_size = max_field_size
         self._show_thumbnail = show_thumbnail
@@ -543,23 +548,23 @@ class MediaWidget(BaseWidget):
                 self._popup_play_button.setText(play_icon)
                 self._popup_play_button.setProperty("class", f"btn play {'disabled' if not is_play_enabled else ''}")
                 self._popup_play_button.setCursor(
-                    Qt.CursorShape.PointingHandCursor if is_play_enabled else Qt.CursorShape.PointingHandCursor
+                    Qt.CursorShape.PointingHandCursor if is_play_enabled else Qt.CursorShape.ArrowCursor
                 )
-                self._popup_play_button.setStyleSheet("")
+                refresh_widget_style(self._popup_play_button)
 
             if self._popup_prev_label:
                 self._popup_prev_label.setProperty("class", f"btn prev {'disabled' if not is_prev_enabled else ''}")
                 self._popup_prev_label.setCursor(
-                    Qt.CursorShape.PointingHandCursor if is_prev_enabled else Qt.CursorShape.PointingHandCursor
+                    Qt.CursorShape.PointingHandCursor if is_prev_enabled else Qt.CursorShape.ArrowCursor
                 )
-                self._popup_prev_label.setStyleSheet("")
+                refresh_widget_style(self._popup_prev_label)
 
             if self._popup_next_label:
                 self._popup_next_label.setProperty("class", f"btn next {'disabled' if not is_next_enabled else ''}")
                 self._popup_next_label.setCursor(
-                    Qt.CursorShape.PointingHandCursor if is_next_enabled else Qt.CursorShape.PointingHandCursor
+                    Qt.CursorShape.PointingHandCursor if is_next_enabled else Qt.CursorShape.ArrowCursor
                 )
-                self._popup_next_label.setStyleSheet("")
+                refresh_widget_style(self._popup_next_label)
         except Exception as e:
             logging.error(f"MediaWidget: Error initializing popup buttons: {e}")
 
@@ -679,15 +684,15 @@ class MediaWidget(BaseWidget):
                 if self._play_label is not None:
                     self._play_label.setText(self._media_button_icons["play"])
                     self._play_label.setProperty("class", "btn play disabled")
-                    self._play_label.setStyleSheet("")
+                    refresh_widget_style(self._play_label)
 
                 if self._prev_label is not None:
                     self._prev_label.setProperty("class", "btn prev disabled")
-                    self._prev_label.setStyleSheet("")
+                    refresh_widget_style(self._prev_label)
 
                 if self._next_label is not None:
                     self._next_label.setProperty("class", "btn next disabled")
-                    self._next_label.setStyleSheet("")
+                    refresh_widget_style(self._next_label)
 
             # If we want to hide the widget when no music is playing, hide it!
             if self._hide_empty:
@@ -709,19 +714,23 @@ class MediaWidget(BaseWidget):
 
             self._prev_label.setProperty("class", f"btn prev {'disabled' if not is_prev_enabled else ''}")
             self._prev_label.setCursor(
-                Qt.CursorShape.PointingHandCursor if is_prev_enabled else Qt.CursorShape.PointingHandCursor
+                Qt.CursorShape.PointingHandCursor if is_prev_enabled else Qt.CursorShape.ArrowCursor
             )
 
             self._play_label.setProperty("class", f"btn play {'disabled' if not is_play_enabled else ''}")
             self._play_label.setCursor(
-                Qt.CursorShape.PointingHandCursor if is_play_enabled else Qt.CursorShape.PointingHandCursor
+                Qt.CursorShape.PointingHandCursor if is_play_enabled else Qt.CursorShape.ArrowCursor
             )
 
             self._next_label.setProperty("class", f"btn next {'disabled' if not is_next_enabled else ''}")
             self._next_label.setCursor(
-                Qt.CursorShape.PointingHandCursor if is_next_enabled else Qt.CursorShape.PointingHandCursor
+                Qt.CursorShape.PointingHandCursor if is_next_enabled else Qt.CursorShape.ArrowCursor
             )
 
+            refresh_widget_style(self._prev_label, self._play_label, self._next_label)
+
+            # Clear any inline styles
+            # Related to https://github.com/amnweb/yasb/issues/481
             self._prev_label.setStyleSheet("")
             self._play_label.setStyleSheet("")
             self._next_label.setStyleSheet("")
@@ -736,23 +745,23 @@ class MediaWidget(BaseWidget):
                         "class", f"btn play {'disabled' if not is_play_enabled else ''}"
                     )
                     self._popup_play_button.setCursor(
-                        Qt.CursorShape.PointingHandCursor if is_play_enabled else Qt.CursorShape.PointingHandCursor
+                        Qt.CursorShape.PointingHandCursor if is_play_enabled else Qt.CursorShape.ArrowCursor
                     )
-                    self._popup_play_button.setStyleSheet("")
+                    refresh_widget_style(self._popup_play_button)
 
                 if self._popup_prev_label is not None:
                     self._popup_prev_label.setProperty("class", f"btn prev {'disabled' if not is_prev_enabled else ''}")
                     self._popup_prev_label.setCursor(
-                        Qt.CursorShape.PointingHandCursor if is_prev_enabled else Qt.CursorShape.PointingHandCursor
+                        Qt.CursorShape.PointingHandCursor if is_prev_enabled else Qt.CursorShape.ArrowCursor
                     )
-                    self._popup_prev_label.setStyleSheet("")
+                    refresh_widget_style(self._popup_prev_label)
 
                 if self._popup_next_label is not None:
                     self._popup_next_label.setProperty("class", f"btn next {'disabled' if not is_next_enabled else ''}")
                     self._popup_next_label.setCursor(
-                        Qt.CursorShape.PointingHandCursor if is_next_enabled else Qt.CursorShape.PointingHandCursor
+                        Qt.CursorShape.PointingHandCursor if is_next_enabled else Qt.CursorShape.ArrowCursor
                     )
-                    self._popup_next_label.setStyleSheet("")
+                    refresh_widget_style(self._popup_next_label)
         except RuntimeError:
             self._popup_play_button = None
             self._popup_prev_label = None
@@ -764,7 +773,7 @@ class MediaWidget(BaseWidget):
             self._popup_next_label = None
 
     @QtCore.pyqtSlot(object)  # None or dict
-    def _on_media_properties_changed(self, media_info: Optional[dict[str, Any]]):
+    def _on_media_properties_changed(self, media_info: dict[str, Any] | None):
         try:
             if (
                 hasattr(self, "_dialog")
@@ -794,8 +803,8 @@ class MediaWidget(BaseWidget):
                         if source_name is not None:
                             self._popup_source_label.setText(source_name)
                             self._popup_source_label.setProperty("class", f"source {source_class_name}")
-                            self._popup_source_label.style().unpolish(self._popup_source_label)
-                            self._popup_source_label.style().polish(self._popup_source_label)
+
+                            refresh_widget_style(self._popup_source_label)
 
                 except Exception as e:
                     logging.error(f"Error updating popup content: {e}")
@@ -811,27 +820,30 @@ class MediaWidget(BaseWidget):
         if self._controls_only:
             return
 
-        if self._max_field_size["truncate_whole_label"]:
-            try:
-                formatted_info = {
-                    k: self._format_max_field_size(v, f"field_{k}") if isinstance(v, str) else v
-                    for k, v in media_info.items()
-                }
-                format_label_content = active_label_content.format(**formatted_info)
-                format_label_content = self._format_max_field_size(format_label_content)
-            except Exception as e:
-                logging.error(f"MediaWidget: Error formatting label: {e}")
-                # Try to at least show the title if available
-                if media_info and "title" in media_info and media_info["title"]:
-                    format_label_content = self._format_max_field_size(media_info["title"])
-                else:
-                    format_label_content = "No media"
-        else:
-            format_label_content = active_label_content.format(
-                **{k: self._format_max_field_size(v) if isinstance(v, str) else v for k, v in media_info.items()}
-            )
-        # Format the label
-        active_label.setText(format_label_content)
+        # Process label content
+        try:
+            items = list(media_info.items()) if media_info else []
+            formatted_info: dict[str, str] = {"s": self._separator}
+            for k, v in items:
+                if isinstance(v, str):
+                    formatted_info[k] = self._format_max_field_size(v)
+
+            # Clean the label content from any empty placeholders or dangling separators
+            cleaned_content = clean_string(active_label_content, formatted_info)
+
+            # Replace the remaining placeholders and separators
+            formatted_label = cleaned_content.format_map(formatted_info)
+
+            # Finally, truncate the label if necessary
+            if self._max_field_size.get("truncate_whole_label"):
+                formatted_label = self._format_max_field_size(formatted_label)
+        except Exception as e:
+            logging.error(f"MediaWidget: Error formatting label: {e}")
+            if media_info and media_info.get("title"):
+                formatted_label = self._format_max_field_size(media_info["title"])
+            else:
+                formatted_label = "No media"
+        active_label.setText(formatted_label)
 
         # If we don't want the thumbnail, stop here
         if not self._show_thumbnail:
@@ -1077,7 +1089,7 @@ class MediaWidget(BaseWidget):
         # Use ImageChops.darker instead of multiply to preserve corner transparency
         return ImageChops.darker(alpha_mask, fade_mask)
 
-    def _format_max_field_size(self, text: str, field_type="default"):
+    def _format_max_field_size(self, text: str, field_type: FieldTypes = "default"):
         if field_type == "popup_title":
             max_size = self._menu_config["max_title_size"]
         elif field_type == "popup_artist":
@@ -1374,8 +1386,7 @@ class MediaWidget(BaseWidget):
             self._app_mute_button.setText(self._menu_config_icons[icon_key])
             self._app_mute_button.setProperty("class", f"{icon_key}-button")
             self._app_mute_button.setEnabled(True)
-            self._app_mute_button.style().unpolish(self._app_mute_button)
-            self._app_mute_button.style().polish(self._app_mute_button)
+            refresh_widget_style(self._app_mute_button)
 
         except Exception as e:
             logging.error(f"MediaWidget: Failed to update mute button: {e}")

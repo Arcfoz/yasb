@@ -43,11 +43,11 @@ from PyQt6.QtWidgets import (
 
 from core.config import HOME_CONFIGURATION_DIR
 from core.event_service import EventService
-from core.utils.utilities import add_shadow, build_widget_label
+from core.utils.utilities import add_shadow, build_widget_label, refresh_widget_style
 from core.utils.widgets.animation_manager import AnimationManager
 from core.utils.widgets.launchpad.app_loader import AppListLoader, ShortcutResolver
 from core.utils.widgets.launchpad.icon_extractor import IconExtractorUtil, UrlExtractorUtil
-from core.utils.win32.utilities import get_foreground_hwnd, qmenu_rounded_corners, set_foreground_hwnd
+from core.utils.win32.utilities import apply_qmenu_style, get_foreground_hwnd, set_foreground_hwnd
 from core.utils.win32.win32_accent import Blur
 from core.validation.widgets.yasb.launchpad import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
@@ -220,15 +220,17 @@ class AppDialog(QDialog):
         button_layout = QHBoxLayout(button_container)
         button_layout.setContentsMargins(0, 0, 0, 0)
 
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setProperty("class", "button")
-        cancel_btn.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_btn)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.cancel_btn.setProperty("class", "button")
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_btn)
 
-        add_btn = QPushButton("Save" if self.is_edit_mode else "Add")
-        add_btn.setProperty("class", f"button {'save' if self.is_edit_mode else 'add'}")
-        add_btn.clicked.connect(self.accept)
-        button_layout.addWidget(add_btn)
+        self.add_btn = QPushButton("Save" if self.is_edit_mode else "Add")
+        self.add_btn.setProperty("class", f"button {'save' if self.is_edit_mode else 'add'}")
+        self.add_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.add_btn.clicked.connect(self.accept)
+        button_layout.addWidget(self.add_btn)
         layout.addWidget(button_container)
         self.setLayout(layout)
 
@@ -359,7 +361,7 @@ class AppDialog(QDialog):
     def lineedit_context_menu(self, lineedit: QLineEdit):
         def show_custom_menu(point):
             menu = lineedit.createStandardContextMenu()
-            qmenu_rounded_corners(menu)
+            apply_qmenu_style(menu)
             menu.setProperty("class", "context-menu")
             for action in menu.actions():
                 action.setIconVisibleInMenu(False)
@@ -449,6 +451,11 @@ class AppDialog(QDialog):
             return
 
         super().accept()
+
+    def done(self, result):
+        for btn in (self.add_btn, self.cancel_btn):
+            btn.unsetCursor()
+        super().done(result)
 
 
 class SmoothScrollArea(QScrollArea):
@@ -756,7 +763,7 @@ class LaunchpadWidget(BaseWidget):
                 self._hide_drop_overlay()
             app_icon._drop_highlight = False
             app_icon.setProperty("isDropTarget", False)
-            app_icon.setStyleSheet("")
+            refresh_widget_style(app_icon)
             app_icon.update()
 
         app_icon.dragLeaveEvent = dragLeaveEvent
@@ -764,7 +771,7 @@ class LaunchpadWidget(BaseWidget):
         def dropEvent(event):
             app_icon._drop_highlight = False
             app_icon.setProperty("isDropTarget", False)
-            app_icon.setStyleSheet("")
+            refresh_widget_style(app_icon)
             app_icon.update()
             source_id = event.mimeData().text()
             target_id = str(app_icon.app_data.get("id", ""))
@@ -787,7 +794,7 @@ class LaunchpadWidget(BaseWidget):
         cache_key = f"{icon_path}_{self._app_icon_size}_{self._dpr}"
         if cache_key in _ICON_CACHE:
             app_icon.icon_label.setPixmap(_ICON_CACHE[cache_key])
-            app_icon.icon_label.setStyleSheet("")
+            refresh_widget_style(app_icon.icon_label)
             app_icon._icon_loaded = True
             return
         try:
@@ -795,7 +802,7 @@ class LaunchpadWidget(BaseWidget):
             if not pixmap.isNull():
                 _ICON_CACHE[cache_key] = pixmap
                 app_icon.icon_label.setPixmap(pixmap)
-                app_icon.icon_label.setStyleSheet("")
+                refresh_widget_style(app_icon.icon_label)
                 app_icon._icon_loaded = True
             else:
                 app_icon.icon_label.setText("")
@@ -845,9 +852,9 @@ class LaunchpadWidget(BaseWidget):
         Show context menu for the launchpad or an app icon
         """
         menu_parent = parent_widget if parent_widget else self._launchpad_popup
-        menu = QMenu(menu_parent)
+        menu = QMenu(menu_parent.window())
         menu.setProperty("class", "context-menu")
-        qmenu_rounded_corners(menu)
+        apply_qmenu_style(menu)
 
         if app_data:
             edit_action = QAction("Edit", menu_parent)
@@ -1010,7 +1017,8 @@ class LaunchpadWidget(BaseWidget):
         """)
 
         grid_container = QFrame()
-        grid_container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        grid_container.setObjectName("grid-container")
+        grid_container.setStyleSheet("#grid-container { background: transparent; }")
         grid_container.setContentsMargins(0, 0, 0, 0)
 
         grid_layout = QGridLayout(grid_container)
@@ -1421,7 +1429,7 @@ class LaunchpadWidget(BaseWidget):
             if hasattr(app_icon, "app_data") and app_icon.app_data.get("icon", "") == icon_path:
                 if hasattr(app_icon, "_icon_loaded") and not app_icon._icon_loaded:
                     app_icon.icon_label.setPixmap(pixmap)
-                    app_icon.icon_label.setStyleSheet("")
+                    refresh_widget_style(app_icon.icon_label)
                     app_icon._icon_loaded = True
 
     def _recalculate_grid_columns(self):

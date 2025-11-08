@@ -1,17 +1,33 @@
+import ctypes
 import logging
 import struct
-from ctypes import byref, create_string_buffer, sizeof
+from ctypes import byref, c_ulong, create_string_buffer, create_unicode_buffer, sizeof
 
 import win32api
 import win32con
 import win32gui
+import win32process
 import win32ui
+from icoextract import IconExtractor
 from PIL import Image
 from win32con import DIB_RGB_COLORS
 
-from core.utils.win32.app_aumid import get_aumid_for_window, get_icon_for_aumid
-from core.utils.win32.bindings import DeleteObject, GetDC, GetDIBits, GetIconInfo, GetObject, ReleaseDC
-from core.utils.win32.structs import BITMAP, BITMAPINFO, BITMAPINFOHEADER, ICONINFO
+from core.utils.win32.aumid import GetApplicationUserModelId, get_aumid_for_window
+from core.utils.win32.aumid_icons import get_icon_for_aumid
+from core.utils.win32.bindings import (
+    CloseHandle,
+    DeleteObject,
+    GetDC,
+    GetDIBits,
+    GetIconInfo,
+    GetObject,
+    OpenProcess,
+    QueryFullProcessImageNameW,
+    ReleaseDC,
+    shell32,
+)
+from core.utils.win32.constants import PROCESS_QUERY_LIMITED_INFORMATION, SHGSI_ICON, SHGSI_LARGEICON
+from core.utils.win32.structs import BITMAP, BITMAPINFO, BITMAPINFOHEADER, ICONINFO, SHSTOCKICONINFO
 
 pil_logger = logging.getLogger("PIL")
 pil_logger.setLevel(logging.INFO)
@@ -162,6 +178,102 @@ def get_window_icon(hwnd: int):
         return None
 
 
+def get_process_icon(pid: int) -> Image.Image | None:
+    """Get icon for a process by PID.
+
+    Tries multiple methods:
+    - AUMID-based extraction for UWP apps
+    - Extract from executable using icoextract
+    - Find window and extract icon from window handle
+
+    Returns PIL Image or None if icon cannot be extracted.
+    """
+    try:
+        # Try AUMID for UWP apps first
+        try:
+            if GetApplicationUserModelId is not None:
+                h_process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                if h_process:
+                    try:
+                        length = c_ulong(0)
+                        res = GetApplicationUserModelId(h_process, byref(length), None)
+                        ERROR_INSUFFICIENT_BUFFER = 0x7A
+                        if res == ERROR_INSUFFICIENT_BUFFER and length.value:
+                            buf = create_unicode_buffer(length.value)
+                            res = GetApplicationUserModelId(h_process, byref(length), buf)
+                            if res == 0 and buf.value:
+                                aumid = buf.value
+                                # Got AUMID, extract icon using AUMID method
+                                icon_img = get_icon_for_aumid(aumid)
+                                if icon_img:
+                                    CloseHandle(h_process)
+                                    return icon_img
+                    finally:
+                        CloseHandle(h_process)
+        except Exception as e:
+            logging.debug(f"Failed to get AUMID icon for PID {pid}: {e}")
+
+        # Get executable path and extract icon from it
+        h_process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if h_process:
+            try:
+                size = c_ulong(1024)
+                buf = create_unicode_buffer(size.value)
+                if QueryFullProcessImageNameW(h_process, 0, buf, byref(size)):
+                    exe_path = buf.value
+
+                    # Extract icon from executable using icoextract
+                    try:
+                        extractor = IconExtractor(exe_path)
+                        icon_data = extractor.get_icon()
+                        icon_img = Image.open(icon_data)
+                        return icon_img
+                    except Exception as e:
+                        logging.debug(f"Failed to extract icon from {exe_path}: {e}")
+            finally:
+                CloseHandle(h_process)
+
+        # Try to find window and get icon from it (fallback)
+        def enum_windows_callback(hwnd, results):
+            try:
+                _, window_pid = win32process.GetWindowThreadProcessId(hwnd)
+                if window_pid == pid:
+                    if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
+                        results.append(hwnd)
+            except:
+                pass
+
+        windows = []
+        win32gui.EnumWindows(enum_windows_callback, windows)
+
+        if windows:
+            hwnd = windows[0]
+            icon_img = get_window_icon(hwnd)
+            if icon_img:
+                return icon_img
+
+        # Fallback OS default application icon
+        try:
+            size = win32api.GetSystemMetrics(win32con.SM_CXICON)
+            default_hicon = win32gui.LoadImage(
+                0,
+                win32con.IDI_APPLICATION,
+                win32con.IMAGE_ICON,
+                size,
+                size,
+                win32con.LR_SHARED,
+            )
+            if default_hicon:
+                return hicon_to_image(default_hicon)
+        except Exception as e:
+            logging.debug(f"Failed to get default icon: {e}")
+
+    except Exception as e:
+        logging.debug(f"Failed to get icon for PID {pid}: {e}")
+
+    return None
+
+
 def hicon_to_image(hicon: int) -> Image.Image | None:
     """Converts an icon handle to an image"""
     # Get icon info
@@ -182,7 +294,6 @@ def hicon_to_image(hicon: int) -> Image.Image | None:
 
     width, height = bitmap.bmWidth, bitmap.bmHeight
     buffer_size = width * height * 4
-
     # Create buffers for the bitmap data
     color_buffer = create_string_buffer(buffer_size)
     mask_buffer = create_string_buffer(buffer_size)
@@ -262,3 +373,42 @@ def hicon_to_image(hicon: int) -> Image.Image | None:
 
     # Create PIL Image
     return Image.frombuffer("RGBA", (width, height), bytes(img_data), "raw", "RGBA", 0, 1)
+
+
+def get_stock_icon(icon_id: int) -> Image.Image | None:
+    """Get a Windows stock icon by its SHSTOCKICONID value.
+
+    Args:
+        icon_id: Stock icon ID from SHSTOCKICONID enum
+                 Example values:
+                 - 31 (SIID_RECYCLER): Empty recycle bin
+                 - 32 (SIID_RECYCLERFULL): Full recycle bin
+                 See: https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-shstockiconid
+
+    Returns:
+        PIL Image of the stock icon, or None if retrieval fails
+    """
+    try:
+        # SHGSI flags - must include SHGSI_ICON to request icon handle
+        flags = SHGSI_ICON | SHGSI_LARGEICON
+
+        sii = SHSTOCKICONINFO()
+        sii.cbSize = ctypes.sizeof(sii)
+
+        # Get the stock icon
+        result = shell32.SHGetStockIconInfo(icon_id, flags, ctypes.byref(sii))
+        if result != 0 or not sii.hIcon:
+            return None
+
+        try:
+            icon_img = hicon_to_image(sii.hIcon)
+            return icon_img
+        finally:
+            try:
+                win32gui.DestroyIcon(sii.hIcon)
+            except Exception:
+                pass
+
+    except Exception as e:
+        logging.error(f"Error getting stock icon {icon_id}: {e}")
+        return None

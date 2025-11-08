@@ -19,7 +19,9 @@ from winmica import BackdropType, EnableMica, is_mica_supported
 
 from core.ui.style import apply_button_style, apply_link_button_style
 from core.ui.windows.update_dialog import ReleaseFetcher, ReleaseInfo, UpdateDialog
-from core.utils.utilities import is_valid_qobject
+from core.utils.tooltip import set_tooltip
+from core.utils.update_service import get_update_service
+from core.utils.utilities import get_architecture, is_valid_qobject, refresh_widget_style
 from settings import (
     APP_NAME,
     BUILD_VERSION,
@@ -28,6 +30,8 @@ from settings import (
     RELEASE_CHANNEL,
     SCRIPT_PATH,
 )
+
+ARCHITECTURE = get_architecture()
 
 if TYPE_CHECKING:
     from core.tray import SystemTrayManager
@@ -38,6 +42,12 @@ class AboutDialog(QDialog):
         "idle": {"text": "Check for Updates", "enabled": True, "attr": "idle"},
         "checking": {"text": "Checking for Updates", "enabled": False, "attr": "checking"},
         "available": {"text": "New Update Available", "enabled": True, "attr": "available"},
+        "unsupported": {
+            "text": "Updates disabled",
+            "enabled": False,
+            "attr": "unsupported",
+            "tooltip": "Install YASB to enable automatic updates.",
+        },
     }
 
     def __init__(self, tray_manager: "SystemTrayManager"):
@@ -49,6 +59,10 @@ class AboutDialog(QDialog):
 
         self._release_fetcher: Optional[ReleaseFetcher] = None
         self._update_dialog: Optional[UpdateDialog] = None
+
+        # Check if updates are supported (installed app + supported architecture)
+        update_service = get_update_service()
+        self._updates_supported = update_service.is_update_supported()
 
         self._link_buttons: list[QPushButton] = []
         self._secondary_buttons: list[QPushButton] = []
@@ -63,6 +77,7 @@ class AboutDialog(QDialog):
     def _build_window(self) -> None:
         self.setWindowTitle(f"About {APP_NAME}")
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setWindowFlag(Qt.WindowType.Window, True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setMinimumSize(360, 480)
@@ -98,7 +113,8 @@ class AboutDialog(QDialog):
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
 
-        version_label = QLabel(f"Version {BUILD_VERSION} ({RELEASE_CHANNEL})")
+        arch_suffix = f" {ARCHITECTURE}" if ARCHITECTURE else ""
+        version_label = QLabel(f"Version {BUILD_VERSION}{arch_suffix} ({RELEASE_CHANNEL})")
         version_label.setContentsMargins(0, 4, 0, 0)
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         version_font = version_label.font()
@@ -145,7 +161,10 @@ class AboutDialog(QDialog):
             lambda: self._tray._open_in_browser(f"{GITHUB_URL}/graphs/contributors"),
         )
         self._open_config_button = self._create_action_button("Open Config", self._tray._open_config)
-        self._update_button = self._create_action_button("Check for Updates", self._handle_update_clicked)
+        idle_text = self._STATE_CONFIG["idle"]["text"]
+        self._update_button = self._create_action_button(idle_text, self._handle_update_clicked)
+        if not self._updates_supported:
+            self._disable_update_capability()
 
         for button in (
             self._support_project_button,
@@ -197,8 +216,7 @@ class AboutDialog(QDialog):
         state = self._update_button.property("updateState") or "idle"
         variant = "primary" if state == "available" else "secondary"
         apply_button_style(self._update_button, variant)
-        self._update_button.style().unpolish(self._update_button)
-        self._update_button.style().polish(self._update_button)
+        refresh_widget_style(self._update_button)
 
     def _apply_state(
         self,
@@ -209,6 +227,10 @@ class AboutDialog(QDialog):
         revert_after: Optional[int] = None,
     ) -> None:
         if not is_valid_qobject(self._update_button):
+            return
+        if not self._updates_supported:
+            self._reset_timer.stop()
+            self._disable_update_capability()
             return
         self._reset_timer.stop()
         config = self._STATE_CONFIG[state]
@@ -241,6 +263,8 @@ class AboutDialog(QDialog):
             self._release_fetcher = None
 
     def _start_update_check(self) -> None:
+        if not self._updates_supported:
+            return
         if not is_valid_qobject(self._update_button):
             return
         if self._release_fetcher and self._release_fetcher.isRunning():
@@ -256,6 +280,8 @@ class AboutDialog(QDialog):
         fetcher.start()
 
     def _handle_update_clicked(self) -> None:
+        if not self._updates_supported:
+            return
         if not is_valid_qobject(self._update_button):
             return
         state = self._update_button.property("updateState") or "idle"
@@ -299,6 +325,20 @@ class AboutDialog(QDialog):
     def _clear_update_dialog(self, dialog: Optional[UpdateDialog] = None) -> None:
         if dialog is None or dialog is self._update_dialog:
             self._update_dialog = None
+
+    def _disable_update_capability(self) -> None:
+        if not is_valid_qobject(self._update_button):
+            return
+        config = self._STATE_CONFIG.get("unsupported", {})
+        self._update_button.setEnabled(False)
+        self._update_button.setProperty("updateState", "unsupported")
+        self._update_button.setProperty("releaseInfo", None)
+        self._update_button.setProperty("state", config.get("attr", "unsupported"))
+        self._update_button.setText(config.get("text", config["text"]))
+        set_tooltip(self._update_button, config["tooltip"], 0, position="top")
+
+        apply_button_style(self._update_button, "secondary")
+        refresh_widget_style(self._update_button)
 
     def showEvent(self, event) -> None:
         self._apply_palette()

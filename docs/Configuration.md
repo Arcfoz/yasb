@@ -28,9 +28,6 @@ YASB_WEATHER_LOCATION=your_location_here
 # Some Qt settings
 QT_SCREEN_SCALE_FACTORS="1.25;1"
 QT_SCALE_FACTOR_ROUNDING_POLICY="PassThrough"
-# OpenGL settings, Use "desktop" for hardware acceleration, "software" for software rendering
-QT_OPENGL="desktop" 
-QT_OPENGL="software"
 ```
 
 ## YASB Font Engine
@@ -74,16 +71,19 @@ Valid options are:
 | Option            | Type    | Default       | Description |
 |-------------------|---------|---------------|-------------|
 | `enabled`         | boolean | `true`        | Whether the status bar is enabled. |
-| `screens`         | list    | `['*']`       | The screens on which the status bar should be displayed. |
+| `screens`         | list    | `['*']`       | The screens on which the status bar should be displayed. Use `['*']` for all unassigned screens, `['**']` for all screens (including assigned), or specify screen names like `['DELL P2419H (1)']`. |
 | `class_name`      | string  | `"yasb-bar"`  | The CSS class name for the status bar. |
 | `alignment`       | object  | [See below](#bar-alignment) | The alignment settings for the status bar. |
 | `blur_effect`     | object  | [See below](#blur-effect-configuration) | The blur effect settings for the status bar. |
 | `window_flags`    | object  | [See below](#window-flags-configuration) | The window flags for the status bar. |
-| `dimensions`      | object  | `{width: "100%", height: 36}` | The dimensions of the status bar. |
+| `dimensions`      | object  | `{width: "100%", height: 36}` | The dimensions of the status bar. Width can be a number (pixels), percentage string (e.g., `"100%"`, `"50%"`), or `"auto"` to resize based on content. When using `"auto"`, the bar will automatically resize as widget content changes, with a maximum width of the available screen width minus padding. |
 | `padding`         | object  | `{top: 4, left: 0, bottom: 4, right: 0}` | The padding for the status bar. |
 | `animation`       | object  | `{enabled: true, duration: 500}` | The animation settings for the status bar. Duration is in milliseconds. Animation is used to show/hide the bar smoothly. |
 | `widgets`         | list  | `left[], center[], right[]` | Active widgets and position. |
 | `layouts`         | object  | [See below](#layouts-configuration) | Configuration for widget layouts in each section (left, center, right). |
+
+> **note:**
+> Setting the width to `"auto"` is not recommended for widgets that constantly update data, such as CPU, memory, clock, etc. This can cause the bar to constantly resize, which may lead to flickering or performance issues.
 
 > **Note:**
 > `screens` can be specified as a list of monitor names. If you want the bar to appear on all screens, use `['*']`. To specify a single screen, use `['DELL P2419H (1)']` or a similar name based on your monitor setup. To show the bar only and always on the primary screen, use `['primary']`.
@@ -139,23 +139,38 @@ layouts:
 
 # Multiple Bars Example
 > **Note:**
-> If you want to have different bars on each screen you will need to define on which screen the bar should be displayed, `screens` inside bar config is your monitor name. You can find your monitor name inside device manager or click on YASB tray icon and select Debug > Information to show all available screens.
+> If you want to have different bars on each screen you will need to define on which screen the bar should be displayed, `screens` inside bar config is your monitor name. You can find your monitor names using `yasbc monitor-information` or inside device manager.
+
+## Screen Assignment Options:
+- `screens: ['*']` - Show on all **unassigned** screens (screens not explicitly assigned to other bars)
+- `screens: ['**']` - Show on **all screens** (including screens assigned to other bars)
+- `screens: ['SCREEN_NAME']` - Show on specific screen(s)
 
 ```
 bars:
   status-bar:
-    screens: ['DELL P2419H (1)'] 
+    screens: ['DELL P2419H (1)']  # Show only on monitor 1
     widgets:
       left: ["clock"]
       center: ["cpu"]
       right: ["memory"]
 
   status-bar-2:
-    screens: ['DELL P2419H (2)'] 
+    screens: ['DELL P2419H (2)']  # Show only on monitor 2
     widgets:
       left: ["active_window"]
       center: ["media"]
       right: ["volume","power_menu"]
+
+  status-bar-3:
+    screens: ['*']  # Show on all unassigned screens
+    widgets:
+      center: ["weather"]
+
+  global-taskbar:
+    screens: ['**']  # Show on ALL screens (including monitors 1 and 2)
+    widgets:
+      left: ["taskbar"]
 
 widgets:
     ...

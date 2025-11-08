@@ -4,14 +4,15 @@ import re
 import traceback
 import urllib.parse
 from datetime import datetime
-from typing import Any, cast
+from functools import partial
+from typing import Any
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSlot
 from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QStyle, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from core.utils.tooltip import set_tooltip
-from core.utils.utilities import PopupWidget, add_shadow
+from core.utils.utilities import PopupWidget, add_shadow, refresh_widget_style
 from core.utils.widgets.animation_manager import AnimationManager
 from core.utils.widgets.weather.api import IconFetcher, WeatherDataFetcher
 from core.utils.widgets.weather.widgets import (
@@ -64,14 +65,14 @@ class WeatherWidget(BaseWidget):
 
         # Create network manager, request and timer
         self._weather_fetcher = WeatherDataFetcher.get_instance(self, QUrl(self._api_url), update_interval * 1000)
-        self._weather_fetcher.finished.connect(self.process_weather_data)  # type: ignore[reportUnknownMemberType]
-        self._weather_fetcher.finished.connect(lambda *_: self._update_label(True))  # type: ignore[reportUnknownMemberType]
+        self._weather_fetcher.finished.connect(self.process_weather_data)
+        self._weather_fetcher.finished.connect(lambda *_: self._update_label(True))
         self._icon_fetcher = IconFetcher.get_instance(self)
 
         # Retry timer
         self._retry_timer = QTimer(self)
         self._retry_timer.setSingleShot(True)
-        self._retry_timer.timeout.connect(self._weather_fetcher.make_request)  # type: ignore[reportUnknownMemberType]
+        self._retry_timer.timeout.connect(self._weather_fetcher.make_request)
 
         # Set weather data formatting
         self._units = units
@@ -111,9 +112,9 @@ class WeatherWidget(BaseWidget):
         self.widget_layout.addWidget(self._widget_container)
         self._create_dynamically_label(self._label_content, self._label_alt_content)
 
-        self.register_callback("toggle_label", self._toggle_label)  # type: ignore
-        self.register_callback("toggle_card", self._toggle_card)  # type: ignore
-        self.register_callback("update_label", self._update_label)  # type: ignore
+        self.register_callback("toggle_label", self._toggle_label)
+        self.register_callback("toggle_card", self._toggle_card)
+        self.register_callback("update_label", self._update_label)
 
         self.callback_left = callbacks["on_left"]
         self.callback_right = callbacks["on_right"]
@@ -188,8 +189,17 @@ class WeatherWidget(BaseWidget):
         hourly_temperature_widget.setProperty("class", "hourly-data")
         hourly_temperature_scroll_area = HourlyTemperatureScrollArea()
         hourly_temperature_scroll_area.setWidget(hourly_temperature_widget)
-        hourly_temperature_scroll_area.setProperty("class", "hourly-container")
 
+        # NOTE: # This is needed for Qt >=6.10.0 because QScrollArea
+        # refuses to play nicely with background color and border styles
+        hourly_container_wrapper = QFrame()
+        hourly_container_wrapper_layout = QHBoxLayout()
+        hourly_container_wrapper.setLayout(hourly_container_wrapper_layout)
+        hourly_container_wrapper_layout.addWidget(hourly_temperature_scroll_area)
+        hourly_container_wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        hourly_container_wrapper.setProperty("class", "hourly-container")
+
+        @pyqtSlot(int)
         def switch_hourly_data(day_idx: int):
             combined_data = []
             current_time = None
@@ -232,7 +242,7 @@ class WeatherWidget(BaseWidget):
             frame_day = ClickableWidget()
             self._weather_card_daily_widgets.append(frame_day)
             if self._hourly_data_today and self._weather_card["show_hourly_forecast"]:
-                frame_day.clicked.connect(lambda i=i: switch_hourly_data(i))  # pyright: ignore[reportUnknownMemberType]
+                frame_day.clicked.connect(partial(switch_hourly_data, i))
             frame_day.setProperty("class", "weather-card-day")
             if i == 0:
                 name = "Today"
@@ -273,7 +283,7 @@ class WeatherWidget(BaseWidget):
 
         # If we have no data just don't add the widget at all
         if self._hourly_data_today and self._weather_card["show_hourly_forecast"]:
-            main_layout.addWidget(hourly_temperature_scroll_area)
+            main_layout.addWidget(hourly_container_wrapper)
 
         self.dialog.setLayout(main_layout)
 
@@ -356,11 +366,10 @@ class WeatherWidget(BaseWidget):
         self._widgets_alt = process_content(content_alt, is_alt=True)
 
     def _reload_css(self, label: QLabel):
-        style = cast(QStyle, label.style())
-        style.unpolish(label)
-        style.polish(label)
+        refresh_widget_style(label)
         label.update()
 
+    @pyqtSlot(bool)
     def _update_label(self, update_class: bool = True):
         if self._weather_data is None:
             logging.warning("Weather data is not yet available.")
@@ -387,11 +396,8 @@ class WeatherWidget(BaseWidget):
                 if not part or widget_index >= len(active_widgets):
                     continue
                 if "<span" in part and "</span>" in part:
-                    icon = re.sub(r"<span.*?>|</span>", "", part).strip()
-                    # Only replace with icons dictionary if the content is actually in the dictionary
-                    if icon in self._icons:
-                        icon = self._icons.get(icon)
-                    active_widgets[widget_index].setText(icon)
+                    icon_name = re.sub(r"<span.*?>|</span>", "", part).strip()
+                    active_widgets[widget_index].setText(self._icons.get(icon_name, icon_name))
                     if update_class:
                         # Retrieve current class and append new class based on weather conditions
                         current_class = active_widgets[widget_index].property("class") or ""
@@ -431,6 +437,7 @@ class WeatherWidget(BaseWidget):
             return f"{imperial_val} {imperial_unit}"
         return f"{metric_val} {metric_unit}"
 
+    @pyqtSlot(dict)
     def process_weather_data(self, weather_data: dict[str, Any]):
         try:
             if not weather_data:

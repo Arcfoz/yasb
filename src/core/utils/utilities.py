@@ -2,6 +2,7 @@ import math
 import os
 import platform
 import re
+from datetime import datetime, timezone
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -47,6 +48,104 @@ def app_data_path(filename: str = None) -> Path:
 def is_windows_10() -> bool:
     version = platform.version()
     return bool(re.match(r"^10\.0\.1\d{4}$", version))
+
+
+def detect_architecture() -> tuple[str, str] | None:
+    """Detect the system architecture for build purposes.
+
+    Returns:
+        Tuple of (display_name, msi_suffix): ("ARM64", "aarch64") or ("x64", "x64"), or None if unknown
+    """
+    try:
+        machine = platform.machine().lower()
+
+        # Check for ARM64
+        if machine in ["arm64", "aarch64"]:
+            return ("ARM64", "aarch64")
+
+        # Check for x64
+        if machine in ["amd64", "x86_64", "x64"]:
+            return ("x64", "x64")
+
+        # Fallback: check if running on 64-bit Windows
+        if platform.architecture()[0] == "64bit":
+            return ("x64", "x64")
+
+        return None
+    except Exception:
+        return None
+
+
+def get_architecture() -> str | None:
+    """Get the build architecture from BUILD_CONSTANTS.
+
+    Returns:
+        Architecture string from frozen build, or None if not frozen/built
+    """
+    try:
+        from BUILD_CONSTANTS import ARCHITECTURE  # type: ignore[import-not-found]
+
+        return ARCHITECTURE
+    except ImportError:
+        return None
+
+
+def get_relative_time(iso_timestamp: str) -> str:
+    """
+    Convert an ISO 8601 timestamp to a human-readable relative time string.
+
+    Args:
+        iso_timestamp: ISO 8601 formatted timestamp (e.g., "2024-11-01T12:00:00Z")
+
+    Returns:
+        A relative time string (e.g., "3 days ago", "2 weeks ago", "just now")
+        Returns empty string if timestamp is invalid or empty.
+
+    Examples:
+        >>> get_relative_time("2024-11-07T12:00:00Z")
+        "just now"
+        >>> get_relative_time("2024-11-04T12:00:00Z")
+        "3 days ago"
+    """
+    if not iso_timestamp:
+        return ""
+
+    try:
+        # Parse ISO 8601 timestamp
+        updated = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        diff = now - updated
+
+        seconds = diff.total_seconds()
+        minutes = seconds / 60
+        hours = minutes / 60
+        days = hours / 24
+        weeks = days / 7
+        months = days / 30
+        years = days / 365
+
+        if seconds < 60:
+            return "just now"
+        elif minutes < 60:
+            m = int(minutes)
+            return f"{m} minute{'s' if m != 1 else ''} ago"
+        elif hours < 24:
+            h = int(hours)
+            return f"{h} hour{'s' if h != 1 else ''} ago"
+        elif days < 7:
+            d = int(days)
+            return f"{d} day{'s' if d != 1 else ''} ago"
+        elif weeks < 4:
+            w = int(weeks)
+            return f"{w} week{'s' if w != 1 else ''} ago"
+        elif months < 12:
+            mo = int(months)
+            return f"{mo} month{'s' if mo != 1 else ''} ago"
+        else:
+            y = int(years)
+            return f"{y} year{'s' if y != 1 else ''} ago"
+    except Exception:
+        return ""
 
 
 def is_process_running(process_name: str) -> bool:
@@ -95,6 +194,21 @@ def add_shadow(el: QWidget, options: dict[str, Any]) -> None:
         shadow_effect.setColor(QColor(color))
 
     el.setGraphicsEffect(shadow_effect)
+
+
+def refresh_widget_style(*widgets: QWidget) -> None:
+    """Refresh the style of the given widgets."""
+    for widget in widgets:
+        if widget is None or not is_valid_qobject(widget):
+            continue
+        style = widget.style()
+        if not style:
+            continue
+        try:
+            style.unpolish(widget)
+            style.polish(widget)
+        except Exception:
+            pass
 
 
 def build_widget_label(self, content: str, content_alt: str = None, content_shadow: dict = None):
@@ -374,6 +488,8 @@ class PopupWidget(QWidget):
         self._fade_animation.start()
 
     def eventFilter(self, obj, event):
+        if not isinstance(obj, QObject):
+            return False
         if event.type() == QEvent.Type.MouseButtonPress:
             global_pos = event.globalPosition().toPoint()
 
@@ -494,11 +610,13 @@ class ScrollingLabel(QLabel):
         options (dict[str, Any]): A dictionary of options for the scrolling label.
             update_interval_ms (int): The frequency of the scrolling update in ms (default: 33).
             style (ScrollingLabel.Style): The style of scrolling (default: ScrollingLabel.Style.SCROLL).
-            separator (str): The separator between the text and the scrolling label (default: " ").
+            separator (str): The separator between the text (only added if scrolling occurs).
             label_padding (int): The padding around the text (default: 1).
             ease_slope (int): The slope of the easing function (default: 20).
             ease_pos (float): The position of the easing function (default: 0.8).
             ease_min_value (float): The minimum value of the easing function (default: 0.5).
+            always_scroll (bool): If True, scroll/right modes always scroll.
+                                     If False (default), only scroll if text is wider than the label.
     """
 
     class Style(StrEnum):
@@ -522,10 +640,11 @@ class ScrollingLabel(QLabel):
         self._ease_pos: float = options.get("ease_pos", 0.8)
         self._ease_min: float = max(min(options.get("ease_min_value", 0.5), 1), 0.2)
         self._style = ScrollingLabel.Style(options.get("style", "left"))
+        self._always_scroll: bool = options.get("always_scroll", False)
 
-        self._separator = ""
+        self._separator_str = ""
         if self._style not in {self.Style.BOUNCE, self.Style.BOUNCE_EASE}:
-            self._separator = options.get("separator", " ")
+            self._separator_str = options.get("separator", " ")
 
         self._label_padding_chars = ""
         if self._style in {self.Style.BOUNCE, self.Style.BOUNCE_EASE}:
@@ -535,26 +654,25 @@ class ScrollingLabel(QLabel):
         self._margin = self.contentsMargins()
         self._bounce_direction = -1
         self._offset = 0
+        self._scrolling_needed = False
 
-        self._text = text
-        self.setText(self._text)
+        # Store the original, un-padded/un-separated text
+        self._raw_text = text
+        self._text = ""  # Will be built by _build_text_and_metrics
+
+        # Initialize metrics and text
+        self._font_metrics = QFontMetrics(self.font())
+        self._build_text_and_metrics()
 
         self._scroll_timer = QTimer(self)
-        self._scroll_timer.timeout.connect(self._scroll_text)  # pyright: ignore[reportUnknownMemberType]
-        self._update_text_metrics()
+        self._scroll_timer.timeout.connect(self._scroll_text)
         self._scroll_timer.start(self._update_interval)
 
-    def _ease(
-        self,
-        offset: int,
-        max_offset: int,
-        slope: int = 20,
-        pos: float = 0.8,
-        min_value: float = 0.5,
-    ) -> float:
+    def _ease(self, offset: int, max_offset: int, slope: int = 20, pos: float = 0.8, min_value: float = 0.5) -> float:
         """
         Ease function for scrolling labels in bounce ease mode
-        Returns a value between 0 and 1 based on the offset and max_offset.
+        Returns a value between `min_value` and 1.0 based on the offset.
+        The value is 1.0 at the center and drops to `min_value` at the ends.
         Demo: https://www.desmos.com/calculator/j7eamemxzi
         """
         x = abs(2 * (offset / max_offset) - 1 if max_offset else 0)
@@ -564,25 +682,78 @@ class ScrollingLabel(QLabel):
     def setText(self, a0: str | None):
         super().setText(a0)
         self._offset = 0
-        self._text = ""
-        if a0 is not None:
-            self._text = self._label_padding_chars + a0 + self._separator + self._label_padding_chars
-            self._static_text = QStaticText(self._text)
-            self._static_text.prepare(QTransform(), self.font())
-        self._update_text_metrics()
-        self._scroll_text()  # scroll once to avoid flickering
+        self._raw_text = a0 or ""
+
+        # Re-build text, re-calculate metrics, and check for scrolling
+        self._build_text_and_metrics()
+        # Update offset immediately based on new state
+        self._scroll_text()
+
+    def _build_text_and_metrics(self):
+        """
+        Builds the final text string and updates all text metrics.
+        This resolves the dependency between scrolling state and the separator.
+        """
+        self.ensurePolished()
+        self._margin = self.contentsMargins()
+        self._font_metrics = QFontMetrics(self.font())
+
+        label_width = self.width() - self._margin.left() - self._margin.right()
+
+        # First, determine scrolling state based on raw text
+        base_text = self._label_padding_chars + self._raw_text + self._label_padding_chars
+        base_bb_width = self._font_metrics.boundingRect(base_text).width()
+        text_is_wider = base_bb_width > label_width
+
+        if self._style in {ScrollingLabel.Style.SCROLL_LEFT, ScrollingLabel.Style.SCROLL_RIGHT}:
+            self._scrolling_needed = self._always_scroll or text_is_wider
+        elif self._style in {ScrollingLabel.Style.BOUNCE, ScrollingLabel.Style.BOUNCE_EASE}:
+            self._scrolling_needed = text_is_wider
+        else:
+            self._scrolling_needed = False
+
+        # Build the final text string based on scrolling state
+        if self._scrolling_needed and self._style in {
+            ScrollingLabel.Style.SCROLL_LEFT,
+            ScrollingLabel.Style.SCROLL_RIGHT,
+        }:
+            # Add separator only if scrolling
+            self._text = self._label_padding_chars + self._raw_text + self._separator_str + self._label_padding_chars
+        else:
+            # No separator if not scrolling or bounce mode
+            self._text = self._label_padding_chars + self._raw_text + self._label_padding_chars
+
+        # Prepare QStaticText and update metrics based on final text
+        self._static_text = QStaticText(self._text)
+        self._static_text.prepare(QTransform(), self.font())
+
+        self._text_width = max(self._font_metrics.horizontalAdvance(self._text), 1)
+        self._text_bb_width = self._font_metrics.boundingRect(self._text).width()
+        self._text_y = (self.height() + self._font_metrics.ascent() - self._font_metrics.descent() + 1) // 2
+
+        if self._max_width:
+            self.setMaximumWidth(self._font_metrics.averageCharWidth() * self._max_width)
 
     @pyqtSlot()
     def _scroll_text(self):
-        if self._style == ScrollingLabel.Style.SCROLL_LEFT:
-            self._offset += 1
-        elif self._style == ScrollingLabel.Style.SCROLL_RIGHT:
-            self._offset -= 1
-        elif self._style in {ScrollingLabel.Style.BOUNCE, ScrollingLabel.Style.BOUNCE_EASE}:
+        """Update the offset based on the state calculated in _build_text_and_metrics()"""
+        if not self._scrolling_needed:
             label_width = self.width() - self._margin.left() - self._margin.right()
-            if self._text_bb_width <= label_width:
-                self._offset = (self._text_width - label_width) // 2  # center the text
+            if self._style in {ScrollingLabel.Style.BOUNCE, ScrollingLabel.Style.BOUNCE_EASE}:
+                self._offset = (self._text_width - label_width) // 2  # Center the text
             else:
+                self._offset = 0  # Reset to left-aligned
+
+            # For bounce-ease, reset interval when not scrolling
+            if self._style == ScrollingLabel.Style.BOUNCE_EASE:
+                self._scroll_timer.setInterval(self._update_interval)
+        else:  # Scrolling is needed
+            if self._style == ScrollingLabel.Style.SCROLL_LEFT:
+                self._offset += 1
+            elif self._style == ScrollingLabel.Style.SCROLL_RIGHT:
+                self._offset -= 1
+            elif self._style in {ScrollingLabel.Style.BOUNCE, ScrollingLabel.Style.BOUNCE_EASE}:
+                label_width = self.width() - self._margin.left() - self._margin.right()
                 max_offset = self._text_width - label_width
                 if self._style == ScrollingLabel.Style.BOUNCE_EASE:
                     easing_factor = self._ease(
@@ -601,19 +772,8 @@ class ScrollingLabel(QLabel):
                 elif self._offset <= 0:
                     self._offset = 0
                     self._bounce_direction = 1
-
         if self.isVisible():
             self.update()
-
-    def _update_text_metrics(self):
-        self.ensurePolished()
-        self._margin = self.contentsMargins()
-        self._font_metrics = QFontMetrics(self.font())
-        self._text_width = max(self._font_metrics.horizontalAdvance(self._text), 1)
-        self._text_bb_width = self._font_metrics.boundingRect(self._text).width()
-        self._text_y = (self.height() + self._font_metrics.ascent() - self._font_metrics.descent() + 1) // 2
-        if self._max_width:
-            self.setMaximumWidth(self._font_metrics.averageCharWidth() * self._max_width)
 
     @override
     def paintEvent(self, a0: QPaintEvent | None):
@@ -631,24 +791,40 @@ class ScrollingLabel(QLabel):
         text_y = self._text_y - self._font_metrics.ascent()
 
         if self._style == ScrollingLabel.Style.SCROLL_LEFT:
-            extra_text = x - self._text_width
-            painter.drawStaticText(extra_text, text_y, self._static_text)
-            while x < self._margin.left() + content_rect.width():
-                painter.drawStaticText(x, text_y, self._static_text)
-                x += self._text_width
+            if self._scrolling_needed:
+                extra_text = x - self._text_width
+                painter.drawStaticText(extra_text, text_y, self._static_text)
+                while x < self._margin.left() + content_rect.width():
+                    painter.drawStaticText(x, text_y, self._static_text)
+                    x += self._text_width
+            else:
+                painter.drawStaticText(self._margin.left(), text_y, self._static_text)
+
         elif self._style == ScrollingLabel.Style.SCROLL_RIGHT:
-            extra_text = x + self._text_width
-            painter.drawStaticText(extra_text, text_y, self._static_text)
-            while x > self._margin.left() - self._text_width:
-                painter.drawStaticText(x, text_y, self._static_text)
-                x -= self._text_width
+            if self._scrolling_needed:
+                extra_text = x + self._text_width
+                painter.drawStaticText(extra_text, text_y, self._static_text)
+                while x > self._margin.left() - self._text_width:
+                    painter.drawStaticText(x, text_y, self._static_text)
+                    x -= self._text_width
+            else:
+                painter.drawStaticText(self._margin.left(), text_y, self._static_text)
+
         elif self._style in {ScrollingLabel.Style.BOUNCE, ScrollingLabel.Style.BOUNCE_EASE}:
             x = self._margin.left() - self._offset
             painter.drawStaticText(x, text_y, self._static_text)
 
     def sizeHint(self) -> QSize:
-        self._update_text_metrics()
-        b_rect = self._font_metrics.boundingRect(self._text)
+        # Use metrics we already have if possible.
+        if not hasattr(self, "_font_metrics"):
+            self._font_metrics = QFontMetrics(self.font())
+        if not hasattr(self, "_margin"):
+            self._margin = self.contentsMargins()
+
+        # Calculate hint based on raw text + padding, not the final text
+        base_text = self._label_padding_chars + self._raw_text + self._label_padding_chars
+        b_rect = self._font_metrics.boundingRect(base_text)
+
         width = max(1, b_rect.width() + self._margin.left() + self._margin.right())
         height = max(1, b_rect.height() + self._margin.top() + self._margin.bottom())
         return QSize(min(self.maximumWidth(), width), min(self.maximumHeight(), height))
@@ -656,7 +832,10 @@ class ScrollingLabel(QLabel):
     @override
     def resizeEvent(self, a0: QResizeEvent | None):
         super().resizeEvent(a0)
-        self._update_text_metrics()
+        # Re-build text, re-calculate metrics, and check for scrolling
+        self._build_text_and_metrics()
+        # Update offset immediately based on new state
+        self._scroll_text()
 
 
 class Singleton(type):

@@ -6,27 +6,46 @@ from ctypes import c_int as enum
 from ctypes.wintypes import BOOL, INT, LPCWSTR, WORD
 
 import comtypes
-from comtypes import CLSCTX_ALL, COMMETHOD, GUID, CoInitialize, COMObject, CoUninitialize
+from comtypes import CLSCTX_ALL, COMMETHOD, GUID, CoInitialize, CoUninitialize
+from PIL import Image
+from pycaw.callbacks import AudioEndpointVolumeCallback as PycawAudioEndpointVolumeCallback
 from pycaw.callbacks import MMNotificationClient
 from pycaw.pycaw import (
     AudioUtilities,
     EDataFlow,
-    IAudioEndpointVolume,
-    IAudioEndpointVolumeCallback,
     IMMDeviceEnumerator,
+    ISimpleAudioVolume,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QWheelEvent
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt, pyqtSignal
+from PyQt6.QtGui import QImage, QPixmap, QWheelEvent
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
-from core.utils.tooltip import set_tooltip
-from core.utils.utilities import PopupWidget, add_shadow, build_progress_widget, build_widget_label
+from core.utils.tooltip import CustomToolTip, set_tooltip
+from core.utils.utilities import (
+    PopupWidget,
+    add_shadow,
+    build_progress_widget,
+    build_widget_label,
+    refresh_widget_style,
+)
 from core.utils.widgets.animation_manager import AnimationManager
+from core.utils.win32.app_icons import get_process_icon
+from core.utils.win32.utilities import get_app_name_from_pid
 from core.validation.widgets.yasb.volume import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
+from settings import DEBUG
 
 # Disable comtypes logging
 logging.getLogger("comtypes").setLevel(logging.CRITICAL)
+logging.getLogger("icoextract").setLevel(logging.ERROR)
+
+# Blacklist of process names to exclude from audio menu
+BLACKLISTED_PROCESSES = [
+    "taskhostw.exe",
+    "audiodg.exe",
+    "svchost.exe",
+    "shellhost.exe",
+]
 
 IID_IPolicyConfig = GUID("{f8679f50-850a-41cf-9c72-430f290290c8}")
 CLSID_PolicyConfigClient = GUID("{870af99c-171d-4f9e-af0d-e63df40c2bc9}")
@@ -173,14 +192,13 @@ class AudioEndpointChangeCallback(MMNotificationClient):
         self.parent.update_label_signal.emit()
 
 
-class AudioEndpointVolumeCallback(COMObject):
-    _com_interfaces_ = [IAudioEndpointVolumeCallback]
-
+class AudioEndpointVolumeCallback(PycawAudioEndpointVolumeCallback):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
 
-    def OnNotify(self, pNotify):
+    def on_notify(self, new_volume, new_mute, event_context, channels, channel_volumes):
+        """Called when audio endpoint volume or mute state changes"""
         self.parent.update_label_signal.emit()
 
 
@@ -222,6 +240,8 @@ class VolumeWidget(BaseWidget):
         self.volume = None
         self._volume_icons = volume_icons
         self._progress_bar = progress_bar
+        self._icon_cache = {}
+        self._dpi = 1.0
 
         self.progress_widget = None
         self.progress_widget = build_progress_widget(self, self._progress_bar)
@@ -264,18 +284,173 @@ class VolumeWidget(BaseWidget):
         self.show_volume_menu()
 
     def _on_slider_released(self):
-        try:
-            ctypes.windll.user32.MessageBeep(0)
-        except Exception as e:
-            logging.debug(f"Failed to play volume sound: {e}")
+        # Hide tooltip when slider is released
+        if hasattr(self, "_slider_tooltip") and self._slider_tooltip:
+            self._slider_tooltip.hide()  # Hide instantly without animation
+            # Reset tooltip for next use
+            self._slider_tooltip = None
+        if self._slider_beep:
+            # Play a beep sound when slider is released
+            try:
+                ctypes.windll.user32.MessageBeep(0)
+            except Exception as e:
+                logging.debug(f"Failed to play volume sound: {e}")
+
+    def _get_slider_handle_geometry(self, slider):
+        """Calculate the geometry for the slider handle position"""
+
+        value = slider.value()
+        slider_range = slider.maximum() - slider.minimum()
+        if slider_range > 0:
+            handle_pos = (value - slider.minimum()) / slider_range
+            x_offset = int(slider.width() * handle_pos)
+
+            # Get slider position in global coordinates
+            widget_rect = slider.rect()
+            widget_global_pos = slider.mapToGlobal(widget_rect.topLeft())
+            widget_global_pos.setX(widget_global_pos.x() + x_offset)
+
+            # Create geometry at handle position (thin vertical rect)
+            handle_geometry = QRect(widget_global_pos.x(), widget_global_pos.y(), 1, slider.height())
+            return handle_geometry
+        return None
+
+    def _setup_slider_tooltip(self, slider):
+        """Setup tooltip for slider (only show during drag)"""
+        # Remove the tooltip filter to disable hover tooltips
+        if hasattr(slider, "_tooltip_filter"):
+            slider.removeEventFilter(slider._tooltip_filter)
+            delattr(slider, "_tooltip_filter")
+
+    def _show_slider_tooltip(self, slider, value):
+        """Helper method to show/update tooltip for slider during drag"""
+        if not self._tooltip or not slider.isSliderDown():
+            return
+
+        if not hasattr(self, "_slider_tooltip") or not self._slider_tooltip:
+            # Create new tooltip
+            self._slider_tooltip = CustomToolTip()
+            self._slider_tooltip._position = "top"
+            handle_geometry = self._get_slider_handle_geometry(slider)
+            if handle_geometry:
+                self._slider_tooltip.label.setText(f"{value}%")
+                self._slider_tooltip.adjustSize()
+                self._slider_tooltip._base_pos = self._slider_tooltip._calculate_position(handle_geometry)
+                self._slider_tooltip.move(self._slider_tooltip._base_pos.x(), self._slider_tooltip._base_pos.y())
+                self._slider_tooltip.setWindowOpacity(1.0)
+                self._slider_tooltip.show()
+        else:
+            # Update existing tooltip
+            handle_geometry = self._get_slider_handle_geometry(slider)
+            if handle_geometry:
+                self._slider_tooltip.label.setText(f"{value}%")
+                self._slider_tooltip.adjustSize()
+                base_pos = self._slider_tooltip._calculate_position(handle_geometry)
+                self._slider_tooltip.move(base_pos.x(), base_pos.y())
 
     def _on_slider_value_changed(self, value):
         if self.volume is not None:
             try:
                 self.volume.SetMasterVolumeLevelScalar(value / 100, None)
-                self._update_label()
+                # self._update_label()
+                # Show tooltip while actively dragging
+                if hasattr(self, "volume_slider"):
+                    self._show_slider_tooltip(self.volume_slider, value)
             except Exception as e:
                 logging.error(f"Failed to set volume: {e}")
+
+    def _set_app_volume(self, volume_interface, value, slider=None):
+        """Set volume for a specific application"""
+        try:
+            volume_interface.SetMasterVolume(value / 100, None)
+            # Show tooltip while actively dragging
+            if slider:
+                self._show_slider_tooltip(slider, value)
+        except Exception as e:
+            logging.error(f"Failed to set application volume: {e}")
+
+    def _toggle_app_mute(self, volume_interface, icon_label, slider, pid):
+        """Toggle mute state for a specific application"""
+        try:
+            current_mute = volume_interface.GetMute()
+            new_mute = not current_mute
+            volume_interface.SetMute(new_mute, None)
+            # Update icon and slider state
+            self._update_app_mute_state(icon_label, slider, new_mute, pid)
+        except Exception as e:
+            logging.error(f"Failed to toggle application mute: {e}")
+
+    def _update_app_mute_state(self, icon_label, slider, is_muted, pid):
+        """Update the visual state of an app's icon and slider based on mute status"""
+        try:
+            # Get the original icon
+            app_icon = self._get_process_icon_pixmap(pid, icon_size=16, force_grayscale=is_muted)
+            if app_icon:
+                icon_label.setPixmap(app_icon)
+
+            # Enable/disable the slider
+            slider.setEnabled(not is_muted)
+        except Exception as e:
+            logging.error(f"Failed to update app mute state: {e}")
+
+    def _toggle_app_volumes(self):
+        """Toggle the visibility of application volume sliders with animation"""
+        if not hasattr(self, "app_volumes_container") or not hasattr(self, "app_volumes_expanded"):
+            return
+
+        # Toggle the expanded state
+        self.app_volumes_expanded = not self.app_volumes_expanded
+
+        if self.app_volumes_expanded:
+            # Show container first
+            self.app_volumes_container.show()
+            content_height = self.app_volumes_container.sizeHint().height()
+            target_height = content_height
+            current_height = 0
+            self.app_toggle_btn.setText(self._audio_menu["app_icons"]["toggle_up"])
+            self.app_toggle_btn.setProperty("class", "toggle-apps expanded")
+            if self._tooltip:
+                set_tooltip(self.app_toggle_btn, "Collapse application volumes")
+        else:
+            target_height = 0
+            current_height = self.app_volumes_container.height()
+            self.app_toggle_btn.setText(self._audio_menu["app_icons"]["toggle_down"])
+            self.app_toggle_btn.setProperty("class", "toggle-apps")
+            if self._tooltip:
+                set_tooltip(self.app_toggle_btn, "Expand application volumes")
+
+        refresh_widget_style(self.app_toggle_btn)
+
+        # Stop any existing animation
+        if (
+            hasattr(self, "app_volume_animation")
+            and self.app_volume_animation.state() == QPropertyAnimation.State.Running
+        ):
+            self.app_volume_animation.stop()
+
+        # Set the starting height immediately before animation
+        self.app_volumes_container.setMaximumHeight(current_height)
+
+        # Create animation
+        self.app_volume_animation = QPropertyAnimation(self.app_volumes_container, b"maximumHeight")
+        self.app_volume_animation.setDuration(200)
+        self.app_volume_animation.setStartValue(current_height)
+        self.app_volume_animation.setEndValue(target_height)
+        self.app_volume_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        # Update dialog size during animation
+        self.app_volume_animation.valueChanged.connect(self._resize_dialog)
+
+        # Hide container after animation completes if collapsing
+        if not self.app_volumes_expanded:
+            self.app_volume_animation.finished.connect(lambda: self.app_volumes_container.hide())
+
+        self.app_volume_animation.start()
+
+    def _resize_dialog(self):
+        """Resize the dialog to fit its content during animation"""
+        if hasattr(self, "dialog"):
+            self.dialog.adjustSize()
 
     def _list_audio_devices(self):
         CLSID_MMDeviceEnumerator = GUID("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
@@ -300,7 +475,7 @@ class VolumeWidget(BaseWidget):
 
                 if dev is not None:
                     createDev = AudioUtilities.CreateDevice(dev)
-                    if not ": None" in str(createDev):
+                    if ": None" not in str(createDev):
                         devices.append((createDev.id, createDev.FriendlyName))
             return devices
         finally:
@@ -315,6 +490,137 @@ class VolumeWidget(BaseWidget):
             except:
                 pass
 
+    def _format_session_label(self, name: str) -> str:
+        """Format session label by removing file extensions and truncating if necessary"""
+        name = name.replace(".exe", "")
+        name = name.replace(".", " ")
+        name = name.title()
+        # Truncate if longer than 20 characters
+        if len(name) > 23:
+            name = name[:20] + "..."
+        return name
+
+    def _get_process_icon_pixmap(self, pid: int, icon_size: int = 16, force_grayscale: bool = False) -> QPixmap | None:
+        """Get icon for a process and convert to QPixmap with DPI-aware caching"""
+        try:
+            # Create cache key with PID, icon_size, DPI, and grayscale state
+            cache_key = (pid, icon_size, self._dpi, force_grayscale)
+
+            if cache_key in self._icon_cache:
+                icon_img = self._icon_cache[cache_key]
+            else:
+                # Get current DPI
+                self._dpi = self.screen().devicePixelRatio()
+                icon_img = get_process_icon(pid)
+                if icon_img:
+                    # Resize and convert to RGBA with DPI scaling
+                    scaled_size = int(icon_size * self._dpi)
+                    icon_img = icon_img.resize((scaled_size, scaled_size), Image.LANCZOS)
+                    icon_img = icon_img.convert("RGBA")
+
+                    # Apply grayscale if muted
+                    if force_grayscale:
+                        # Convert to grayscale while preserving alpha channel
+                        grayscale = icon_img.convert("L")
+                        icon_img.paste(grayscale, (0, 0), icon_img)
+
+                    # Cache the resized image
+                    self._icon_cache[cache_key] = icon_img
+
+            if not icon_img:
+                return None
+
+            # Convert to QPixmap
+            data = icon_img.tobytes("raw", "RGBA")
+            qimage = QImage(data, icon_img.width, icon_img.height, QImage.Format.Format_RGBA8888)
+            pixmap = QPixmap.fromImage(qimage)
+            pixmap.setDevicePixelRatio(self._dpi)
+            return pixmap
+        except Exception as e:
+            logging.debug(f"Failed to get icon pixmap for PID {pid}: {e}")
+
+        return None
+
+    def _get_active_audio_sessions(self):
+        """Get all active audio sessions (applications with audio)"""
+        sessions = []
+        seen_sessions = {}  # Track unique sessions by (PID, GroupingParam)
+
+        try:
+            devices = AudioUtilities.GetSpeakers()
+            if not devices:
+                return sessions
+
+            sessions_enum = AudioUtilities.GetAllSessions()
+            for session in sessions_enum:
+                if session.Process and session.Process.name():
+                    # Skip blacklisted processes
+                    if session.Process.name().lower() in [p.lower() for p in BLACKLISTED_PROCESSES]:
+                        continue
+
+                    try:
+                        pid = session.ProcessId
+
+                        try:
+                            grouping_param = str(session.GroupingParam)
+                        except:
+                            grouping_param = ""
+
+                        session_key = (pid, grouping_param)
+
+                        if session_key in seen_sessions:
+                            continue
+
+                        seen_sessions[session_key] = True
+                    except Exception as e:
+                        logging.debug(f"Failed to process session grouping: {e}")
+                        continue
+
+                    volume = session._ctl.QueryInterface(ISimpleAudioVolume)
+                    pid = session.Process.pid
+
+                    # Check if app set a DisplayName for the audio session
+                    app_name = None
+                    if session.DisplayName:
+                        display_name = session.DisplayName.strip()
+                        # Skip resource strings (starts with @ or ms-resource:) - these need special resolution
+                        if (
+                            display_name
+                            and not display_name.startswith("@")
+                            and not display_name.startswith("ms-resource:")
+                        ):
+                            app_name = display_name
+
+                    # Get FileDescription from executable version info
+                    if not app_name:
+                        app_name = get_app_name_from_pid(pid)
+                        # Clean up result - remove extra whitespace
+                        if app_name:
+                            app_name = app_name.strip()
+                            # If it's just whitespace or empty, treat as None
+                            if not app_name:
+                                app_name = None
+
+                    # Fall back to formatted process name
+                    if not app_name:
+                        app_name = self._format_session_label(session.Process.name())
+
+                    sessions.append(
+                        {
+                            "name": session.Process.name(),
+                            "app_name": app_name,
+                            "volume_interface": volume,
+                            "session": session,
+                            "pid": pid,
+                        }
+                    )
+        except Exception as e:
+            logging.error(f"Failed to get audio sessions: {e}")
+
+        sessions.sort(key=lambda s: s["app_name"].lower())
+
+        return sessions
+
     def _update_device_buttons(self, active_device_id):
         # Update classes for all device buttons
         for device_id, btn in self.device_buttons.items():
@@ -322,8 +628,7 @@ class VolumeWidget(BaseWidget):
                 btn.setProperty("class", "device selected")
             else:
                 btn.setProperty("class", "device")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+            refresh_widget_style(btn)
 
     def _set_default_device(self, device_id: str):
         """Set default audio device with error handling and multiple interface attempts"""
@@ -333,7 +638,8 @@ class VolumeWidget(BaseWidget):
         device_id = sender.property("device_id")
 
         try:
-            logging.debug(f"Attempting PolicyConfig interface with device: {device_id}")
+            if DEBUG:
+                logging.debug(f"Attempting PolicyConfig interface with device: {device_id}")
             pc = comtypes.CoCreateInstance(CLSID_PolicyConfigClient, interface=IPolicyConfig, clsctx=CLSCTX_ALL)
             # eConsole = 0, eMultimedia = 1, eCommunications = 2
             pc.SetDefaultEndpoint(device_id, 0)
@@ -343,6 +649,12 @@ class VolumeWidget(BaseWidget):
             self._update_slider_value()
             # Update the device buttons
             self._update_device_buttons(device_id)
+
+            # Close and reopen the menu to refresh audio sessions
+            if hasattr(self, "dialog") and self.dialog:
+                self.dialog.hide()
+                self.show_volume_menu()
+
             return
         except Exception as e:
             logging.debug(f"PolicyConfig failed: {e}")
@@ -370,12 +682,13 @@ class VolumeWidget(BaseWidget):
         self.container.setProperty("class", "audio-container")
         self.container_layout = QVBoxLayout()
         self.container_layout.setSpacing(0)
-        self.container_layout.setContentsMargins(0, 0, 0, 10)
+        self.container_layout.setContentsMargins(0, 0, 0, 0)
 
         self.devices = self._list_audio_devices()
         if len(self.devices) > 1:
             current_device = AudioUtilities.GetSpeakers()
-            current_device_id = current_device.GetId()
+            # Use .id property instead of .GetId() method (new pycaw API)
+            current_device_id = current_device.id
             self.device_buttons = {}
             for device_id, device_name in self.devices:
                 btn = QPushButton(device_name)
@@ -392,7 +705,19 @@ class VolumeWidget(BaseWidget):
 
         layout.addWidget(self.container)
 
-        # Create volume slider
+        # Create global volume section (at the top)
+        global_container = QFrame()
+        global_container.setProperty("class", "system-volume-container")
+        global_layout = QVBoxLayout()
+        global_layout.setSpacing(0)
+        global_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Slider row with toggle button
+        slider_row = QHBoxLayout()
+        slider_row.setSpacing(0)
+        slider_row.setContentsMargins(0, 0, 0, 0)
+
+        # System volume slider
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setProperty("class", "volume-slider")
         self.volume_slider.setMinimum(0)
@@ -407,11 +732,135 @@ class VolumeWidget(BaseWidget):
 
         # Connect slider value change to volume control
         self.volume_slider.valueChanged.connect(self._on_slider_value_changed)
-        # Connect slider release to beep sound
-        if self._slider_beep:
-            self.volume_slider.sliderReleased.connect(self._on_slider_released)
-        # Add slider to layout
-        layout.addWidget(self.volume_slider)
+        # Connect slider release to hide tooltip and optionally beep
+        self.volume_slider.sliderReleased.connect(self._on_slider_released)
+
+        slider_row.addWidget(self.volume_slider)
+
+        self._setup_slider_tooltip(self.volume_slider)
+
+        audio_sessions = []
+        if self._audio_menu["show_apps"]:
+            # Get active audio sessions
+            audio_sessions = self._get_active_audio_sessions()
+            # Add app toggle button on the right (only if there are audio sessions)
+            if audio_sessions:
+                self.app_toggle_btn = QPushButton(self._audio_menu["app_icons"]["toggle_down"])
+                self.app_toggle_btn.setProperty("class", "toggle-apps")
+                self.app_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.app_toggle_btn.clicked.connect(lambda: self._toggle_app_volumes())
+                if self._tooltip:
+                    set_tooltip(self.app_toggle_btn, "Expand application volumes")
+                slider_row.addWidget(self.app_toggle_btn)
+
+        global_layout.addLayout(slider_row)
+        global_container.setLayout(global_layout)
+        layout.addWidget(global_container)
+
+        # Create per-application volume sliders section
+        if audio_sessions and self._audio_menu["show_apps"]:
+            self.app_volumes_container = QFrame()
+            self.app_volumes_container.setProperty("class", "apps-container")
+            app_volumes_layout = QVBoxLayout()
+            app_volumes_layout.setSpacing(0)
+            app_volumes_layout.setContentsMargins(0, 0, 0, 0)
+
+            for session_info in audio_sessions:
+                app_container = QFrame()
+                app_container.setProperty("class", "app-volume")
+                app_layout = QVBoxLayout()
+                app_layout.setSpacing(0)
+                app_layout.setContentsMargins(0, 0, 0, 0)
+
+                display_name = session_info.get("app_name", self._format_session_label(session_info["name"]))
+                if self._audio_menu["show_app_labels"]:
+                    app_label = QLabel(display_name)
+                    app_label.setProperty("class", "app-label")
+                    app_layout.addWidget(app_label)
+
+                slider_layout = QHBoxLayout()
+                slider_layout.setSpacing(0)
+                slider_layout.setContentsMargins(0, 0, 0, 0)
+
+                try:
+                    is_muted = session_info["volume_interface"].GetMute()
+                except:
+                    is_muted = False
+
+                if self._audio_menu["show_app_icons"]:
+                    icon_frame = QFrame()
+                    icon_frame.setContentsMargins(0, 0, 0, 0)
+                    icon_frame.setProperty("class", "app-icon-container")
+                    icon_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+                    if self._tooltip:
+                        set_tooltip(icon_frame, display_name, delay=800, position="top")
+
+                    icon_frame_layout = QHBoxLayout()
+                    icon_frame_layout.setContentsMargins(0, 0, 0, 0)
+                    icon_frame_layout.setSpacing(0)
+                    icon_frame.setLayout(icon_frame_layout)
+
+                    icon_label = QLabel()
+                    icon_label.setProperty("class", "app-icon")
+                    icon_label.setFixedSize(16, 16)
+
+                    # Try to get the app icon (grayscale if muted)
+                    app_icon = self._get_process_icon_pixmap(
+                        session_info["pid"], icon_size=16, force_grayscale=is_muted
+                    )
+                    if app_icon:
+                        icon_label.setPixmap(app_icon)
+
+                    icon_frame_layout.addWidget(icon_label)
+                    slider_layout.addWidget(icon_frame)
+
+                # Application volume slider
+                app_slider = QSlider(Qt.Orientation.Horizontal)
+                app_slider.setProperty("class", "app-slider")
+                app_slider.setMinimum(0)
+                app_slider.setMaximum(100)
+
+                try:
+                    app_volume = int(session_info["volume_interface"].GetMasterVolume() * 100)
+                    app_slider.setValue(app_volume)
+                except:
+                    app_slider.setValue(100)
+                # Disable slider if muted
+                app_slider.setEnabled(not is_muted)
+
+                # Connect to change app volume
+                app_slider.valueChanged.connect(
+                    lambda value,
+                    vol_interface=session_info["volume_interface"],
+                    slider=app_slider: self._set_app_volume(vol_interface, value, slider)
+                )
+                # Connect slider release to hide tooltip
+                app_slider.sliderReleased.connect(self._on_slider_released)
+
+                # Disable hover tooltips (we only show during drag)
+                self._setup_slider_tooltip(app_slider)
+                if self._audio_menu["show_app_icons"]:
+                    # Make icon frame clickable to toggle mute
+                    icon_frame.mousePressEvent = lambda event, vol_interface=session_info[
+                        "volume_interface"
+                    ], icon=icon_label, slider=app_slider, pid=session_info["pid"]: self._toggle_app_mute(
+                        vol_interface, icon, slider, pid
+                    )
+
+                slider_layout.addWidget(app_slider)
+                app_layout.addLayout(slider_layout)
+                app_container.setLayout(app_layout)
+                app_volumes_layout.addWidget(app_container)
+
+            self.app_volumes_container.setLayout(app_volumes_layout)
+
+            # Initially hide the app volumes
+            self.app_volumes_container.setMaximumHeight(0)
+            self.app_volumes_container.hide()
+            layout.addWidget(self.app_volumes_container)
+
+            # Store expanded state
+            self.app_volumes_expanded = False
         self.dialog.setLayout(layout)
 
         # Position the dialog
@@ -423,6 +872,9 @@ class VolumeWidget(BaseWidget):
             offset_top=self._audio_menu["offset_top"],
         )
         self.dialog.show()
+        # Automatically expand app volumes if configured
+        if audio_sessions and self._audio_menu["show_apps_expanded"] and self._audio_menu["show_apps"]:
+            self._toggle_app_volumes()
 
     def _toggle_label(self):
         if self._animation["enabled"]:
@@ -440,15 +892,20 @@ class VolumeWidget(BaseWidget):
         label_parts = re.split("(<span.*?>.*?</span>)", active_label_content)
         label_parts = [part for part in label_parts if part]
         widget_index = 0
-        try:
-            self._initialize_volume_interface()
-            mute_status = self.volume.GetMute()
-            icon_volume = self._get_volume_icon()
-            level_volume = (
-                self._mute_text if mute_status == 1 else f"{round(self.volume.GetMasterVolumeLevelScalar() * 100)}%"
-            )
-        except Exception:
+
+        if self.volume is None:
+            logging.error("No volume interface available")
             mute_status, icon_volume, level_volume = None, "", "No Device"
+        else:
+            try:
+                mute_status = self.volume.GetMute()
+                icon_volume = self._get_volume_icon()
+                level_volume = (
+                    self._mute_text if mute_status == 1 else f"{round(self.volume.GetMasterVolumeLevelScalar() * 100)}%"
+                )
+            except Exception as e:
+                logging.error(f"Failed to get volume info: {e}")
+                mute_status, icon_volume, level_volume = None, "", "No Device"
 
         label_options = {"{icon}": icon_volume, "{level}": level_volume}
 
@@ -486,14 +943,13 @@ class VolumeWidget(BaseWidget):
         else:
             classes.discard("muted")
         widget.setProperty("class", " ".join(classes))
-        widget.style().unpolish(widget)
-        widget.style().polish(widget)
+        refresh_widget_style(widget)
 
     def _get_volume_icon(self):
         current_mute_status = self.volume.GetMute()
         current_volume_level = round(self.volume.GetMasterVolumeLevelScalar() * 100)
         if self._tooltip:
-            set_tooltip(self, f"Volume {current_volume_level}")
+            set_tooltip(self, f"Volume {current_volume_level}% {'(Muted)' if current_mute_status == 1 else ''}")
         if current_mute_status == 1:
             volume_icon = self._volume_icons[0]
         elif 0 <= current_volume_level < 11:
@@ -562,8 +1018,7 @@ class VolumeWidget(BaseWidget):
             if not devices:
                 self.volume = None
                 return
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            self.volume = interface.QueryInterface(IAudioEndpointVolume)
+            self.volume = devices.EndpointVolume
             self.callback = AudioEndpointVolumeCallback(self)
             self.volume.RegisterControlChangeNotify(self.callback)
         except Exception as e:

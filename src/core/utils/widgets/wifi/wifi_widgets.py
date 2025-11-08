@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 from winrt.windows.devices.wifi import WiFiConnectionStatus
 
-from core.utils.utilities import PopupWidget, is_valid_qobject
+from core.utils.utilities import PopupWidget, is_valid_qobject, refresh_widget_style
 from core.utils.widgets.wifi.wifi_managers import (
     NetworkInfo,
     ScanResultStatus,
@@ -40,7 +40,7 @@ from core.utils.widgets.wifi.wifi_managers import (
     WiFiManager,
     WifiState,
 )
-from core.utils.win32.utilities import qmenu_rounded_corners  # type: ignore
+from core.utils.win32.utilities import apply_qmenu_style  # type: ignore
 
 logger = logging.getLogger("wifi_widget")
 
@@ -174,7 +174,7 @@ class WifiItem(QFrame):
     def show_context_menu(self, pos: QPoint):
         menu = QMenu(self)
         menu.setProperty("class", "context-menu")
-        menu.aboutToShow.connect(lambda: qmenu_rounded_corners(menu))  # pyright: ignore[reportUnknownMemberType]
+        apply_qmenu_style(menu)  # pyright: ignore[reportUnknownMemberType]
 
         # Auto-connect checkbox
         self.auto_connect_checkbox = QCheckBox("Auto-connect")
@@ -289,8 +289,7 @@ class WifiItem(QFrame):
         # Update the style
         style = self.style()
         if style is not None:
-            style.unpolish(self)
-            style.polish(self)
+            refresh_widget_style(self)
 
     @override
     def mousePressEvent(self, a0: QMouseEvent | None):
@@ -411,7 +410,7 @@ class WifiList(QScrollArea):
             item.update_state(item is selected)
 
 
-class WifiMenu(QWidget):
+class WifiMenu(QObject):
     """Container for the wifi menu"""
 
     _networks_cache: dict[str, NetworkInfo] = {}

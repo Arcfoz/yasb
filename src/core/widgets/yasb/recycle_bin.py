@@ -1,9 +1,10 @@
 import re
 
+from humanize import naturalsize
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel
 
 from core.utils.tooltip import set_tooltip
-from core.utils.utilities import add_shadow, build_widget_label
+from core.utils.utilities import add_shadow, build_widget_label, refresh_widget_style
 from core.utils.widgets.animation_manager import AnimationManager
 from core.utils.widgets.recycle_bin.recycle_bin_monitor import RecycleBinMonitor
 from core.validation.widgets.yasb.recycle_bin import VALIDATION_SCHEMA
@@ -40,10 +41,8 @@ class RecycleBinWidget(BaseWidget):
         self._label_shadow = label_shadow
         self._container_shadow = container_shadow
 
-        # Get the singleton monitor instance - monitoring starts automatically
         self.monitor = RecycleBinMonitor.get_instance()
-
-        # Connect to the monitor's signal
+        self.monitor.subscribe(id(self))
         self.monitor.bin_updated.connect(self._on_bin_update)
 
         # Construct container
@@ -68,8 +67,6 @@ class RecycleBinWidget(BaseWidget):
         self.callback_right = callbacks["on_right"]
         self.callback_middle = callbacks["on_middle"]
 
-        # Get initial bin info
-        self._bin_info = self.monitor.get_recycle_bin_info()
         self._update_label()
 
     def _toggle_label(self):
@@ -93,7 +90,7 @@ class RecycleBinWidget(BaseWidget):
 
         label_options = {
             "{items_count}": self._bin_info["num_items"],
-            "{items_size}": self._format_size(self._bin_info["size_bytes"]),
+            "{items_size}": naturalsize(self._bin_info["size_bytes"], binary=True, format="%.2f"),
             "{icon}": self._get_current_icon(),
         }
 
@@ -108,19 +105,19 @@ class RecycleBinWidget(BaseWidget):
                         active_widgets[widget_index].setText(formatted_text)
                         base_class = active_widgets[widget_index].property("class").split()[0]
                         active_widgets[widget_index].setProperty("class", f"{base_class} {class_name}")
-                        active_widgets[widget_index].setStyleSheet("")
+                        refresh_widget_style(active_widgets[widget_index])
                 else:
                     if widget_index < len(active_widgets) and isinstance(active_widgets[widget_index], QLabel):
                         alt_class = "alt" if self._show_alt_label else ""
                         active_widgets[widget_index].setText(formatted_text)
                         base_class = "label"
                         active_widgets[widget_index].setProperty("class", f"{base_class} {alt_class} {class_name}")
-                        active_widgets[widget_index].setStyleSheet("")
+                        refresh_widget_style(active_widgets[widget_index])
                 widget_index += 1
         if self._tooltip:
             set_tooltip(
                 self._widget_container,
-                f"Items: {self._bin_info['num_items']} ({self._format_size(self._bin_info['size_bytes'])})",
+                f"Items: {self._bin_info['num_items']} ({naturalsize(self._bin_info['size_bytes'], binary=True, format='%.2f')})",
             )
 
     def _get_current_icon(self):
@@ -134,16 +131,9 @@ class RecycleBinWidget(BaseWidget):
         self._bin_info = bin_info
         self._update_label()
 
-    def _format_size(self, size_bytes):
-        """Format bytes into a human-readable format"""
-        for unit in ["B", "KB", "MB", "GB", "TB"]:
-            if size_bytes < 1024 or unit == "TB":
-                return f"{size_bytes:.2f} {unit}"
-            size_bytes /= 1024
-
     def _empty_bin(self):
         # Prevent multiple emptying operations
-        if self._is_emptying:
+        if self._is_emptying or self._bin_info["num_items"] == 0:
             return
 
         if self._animation["enabled"]:
@@ -160,10 +150,8 @@ class RecycleBinWidget(BaseWidget):
         signal.connect(self._on_empty_finished)
 
     def _on_empty_finished(self):
-        # Reset emptying flag and update label
+        # Reset emptying flag - bin_updated signal will handle the label update
         self._is_emptying = False
-        self._bin_info = self.monitor.get_recycle_bin_info()
-        self._update_label()
 
     def _open_bin(self):
         """Open the recycle bin"""
@@ -173,5 +161,9 @@ class RecycleBinWidget(BaseWidget):
 
     def shutdown(self):
         """Clean up resources when widget is being destroyed"""
-        self.monitor.bin_updated.disconnect(self._on_bin_update)
+        try:
+            self.monitor.bin_updated.disconnect(self._on_bin_update)
+            self.monitor.unsubscribe(id(self))  # Unsubscribe when widget is destroyed
+        except Exception:
+            pass
         super().shutdown()

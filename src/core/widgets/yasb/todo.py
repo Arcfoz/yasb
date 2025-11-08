@@ -25,9 +25,9 @@ from PyQt6.QtWidgets import (
 
 from core.config import HOME_CONFIGURATION_DIR
 from core.utils.tooltip import set_tooltip
-from core.utils.utilities import PopupWidget, add_shadow, build_widget_label
+from core.utils.utilities import PopupWidget, add_shadow, build_widget_label, refresh_widget_style
 from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.win32.utilities import qmenu_rounded_corners
+from core.utils.win32.utilities import apply_qmenu_style
 from core.validation.widgets.yasb.todo import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
 
@@ -416,12 +416,12 @@ class TodoWidget(BaseWidget):
         self._menu.show()
 
     def _show_sort_menu(self):
-        menu = QMenu(self._order_btn)
+        menu = QMenu(self._order_btn.window())
         menu.setProperty("class", "context-menu")
         menu.setStyleSheet("""
             QMenu::indicator:checked { background: transparent;color:transparent }
         """)
-        qmenu_rounded_corners(menu)
+        apply_qmenu_style(menu)
         sort_by_date = QAction("Sort by date (Newest)", self)
         sort_by_date_old = QAction("Sort by date (Oldest)", self)
         sort_reset = QAction("Reset sorting", self)
@@ -557,9 +557,12 @@ class TodoWidget(BaseWidget):
 
     def widget_context_menu(self, widget):
         def show_custom_menu(point):
-            menu = widget.createStandardContextMenu()
-            qmenu_rounded_corners(menu)
+            standard_menu = widget.createStandardContextMenu()
+            menu = QMenu(widget.window())
             menu.setProperty("class", "context-menu")
+            menu.addActions(standard_menu.actions())
+            standard_menu.deleteLater()
+            apply_qmenu_style(menu)
             for action in menu.actions():
                 action.setIconVisibleInMenu(False)
                 action.setIcon(QIcon())
@@ -634,8 +637,7 @@ class TodoWidget(BaseWidget):
                 cb.setChecked(True)
                 cb.setEnabled(False)
                 container.setProperty("class", f"task-item completed {task.get('category', 'default')}")
-                container.style().unpolish(container)
-                container.style().polish(container)
+                refresh_widget_style(container)
                 checkbox.setText(self._icons["checked"])
 
                 def do_archive():
@@ -868,7 +870,7 @@ class TaskFrame(QFrame):
         if event.mimeData().hasText():
             self._drop_highlight = True
             self.setProperty("class", f"task-item drop-highlight {self._task.get('category', 'default')}")
-            self.setStyleSheet("")
+            refresh_widget_style(self)
             self.update()
             event.acceptProposedAction()
         else:
@@ -877,7 +879,7 @@ class TaskFrame(QFrame):
     def dragLeaveEvent(self, event):
         self._drop_highlight = False
         self.setProperty("class", f"task-item {self._task.get('category', 'default')}")
-        self.setStyleSheet("")
+        refresh_widget_style(self)
         self.update()
 
     def dragMoveEvent(self, event):
@@ -897,7 +899,7 @@ class TaskFrame(QFrame):
     def dropEvent(self, event):
         self._drop_highlight = False
         self.setProperty("class", f"task-item {self._task.get('category', 'default')}")
-        self.setStyleSheet("")
+        refresh_widget_style(self)
         self.update()
         source_id = event.mimeData().text()
         target_id = str(self._task_id)

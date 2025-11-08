@@ -3,6 +3,7 @@ from typing import Any
 DEFAULTS: dict[str, Any] = {
     "label": "{title}",
     "label_alt": "{artist} - {title}",
+    "separator": " - ",
     "class_name": "",
     "animation": {"enabled": True, "type": "fadeInOut", "duration": 200},
     "icons": {
@@ -40,8 +41,9 @@ DEFAULTS: dict[str, Any] = {
         "enabled": False,
         "update_interval_ms": 33,
         "style": "left",
+        "always_scroll": False,
         "separator": " ",
-        "label_padding": 1,
+        "label_padding": 0,
         "ease_slope": 20,
         "ease_pos": 0.8,
         "ease_min": 0.5,
@@ -52,6 +54,7 @@ DEFAULTS: dict[str, Any] = {
 VALIDATION_SCHEMA = {
     "label": {"type": "string", "default": DEFAULTS["label"]},
     "label_alt": {"type": "string", "default": DEFAULTS["label_alt"]},
+    "separator": {"type": "string", "default": DEFAULTS["separator"]},
     "class_name": {"type": "string", "required": False, "default": DEFAULTS["class_name"]},
     "hide_empty": {"type": "boolean", "default": False},
     "animation": {
@@ -167,6 +170,7 @@ VALIDATION_SCHEMA = {
                 "default": DEFAULTS["scrolling_label"]["style"],
                 "allowed": ["left", "right", "bounce", "bounce-ease"],
             },
+            "always_scroll": {"type": "boolean", "default": DEFAULTS["scrolling_label"]["always_scroll"]},
             "separator": {"type": "string", "default": DEFAULTS["scrolling_label"]["separator"]},
             "label_padding": {"type": "integer", "default": DEFAULTS["scrolling_label"]["label_padding"]},
             "ease_slope": {"type": "integer", "default": DEFAULTS["scrolling_label"]["ease_slope"]},
