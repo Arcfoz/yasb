@@ -3,7 +3,7 @@ import datetime
 from cx_Freeze import Executable, setup
 
 from core.utils.utilities import detect_architecture
-from settings import APP_ID, BUILD_VERSION
+from settings import APP_ID, BUILD_VERSION, RELEASE_CHANNEL
 
 arch_info = detect_architecture()
 if not arch_info:
@@ -22,26 +22,15 @@ build_options = {
     "silent": True,
     "excludes": ["PySide6", "pydoc_data", "email", "tkinter", "PyQt5", "PySide2", "unittest"],
     "bin_excludes": ["Qt6Pdf.dll", "_avif.cp314-win_amd64.pyd"],
-    "zip_exclude_packages": ["*"],
+    "zip_exclude_packages": [],
+    "zip_include_packages": ["*"],
+    "no_compress": True,
+    "zip_filename": "library.zip",
     "build_exe": "dist",
     "include_msvcr": True,
     "includes": [
         "holidays.countries",
-        "winrt.windows.ui.notifications",
-        "winrt.windows.ui.notifications.management",
-        "winrt.windows.data.xml.dom",
-        "winrt.windows.media",
-        "winrt.windows.media.control",
-        "winrt.windows.management.deployment",
         "winrt.windows.applicationmodel",
-        "winrt.windows.networking",
-        "winrt.windows.networking.connectivity",
-        "winrt.windows.storage",
-        "winrt.windows.storage.streams",
-        "winrt.windows.foundation",
-        "winrt.windows.foundation.collections",
-        "winrt.windows.devices.wifi",
-        "winrt.windows.security.credentials",
     ],
     "optimize": 1,
     "include_files": [
@@ -89,7 +78,7 @@ bdist_msi_options = {
     "initial_target_dir": r"[ProgramFiles64Folder]\YASB",
     "all_users": True,
     "skip_build": True,
-    "target_name": f"yasb-{BUILD_VERSION}-{msi_arch_suffix}.msi",
+    "target_name": f"yasb-{BUILD_VERSION if RELEASE_CHANNEL == 'stable' else 'dev'}-{msi_arch_suffix}.msi",
     "summary_data": {
         "author": "AmN",
         "comments": "A highly configurable Windows status bar",
@@ -123,10 +112,10 @@ executables = [
 ]
 
 setup(
-    name="yasb",
+    name="YASB",
     version=BUILD_VERSION,
     author="AmN",
-    description="Yasb Status Bar",
+    description="YASB",
     executables=executables,
     options={
         "build_exe": build_options,
