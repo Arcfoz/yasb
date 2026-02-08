@@ -4,6 +4,7 @@ import os
 import re
 
 import win32gui
+import win32process
 from PIL import Image
 from PyQt6.QtCore import QElapsedTimer, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
@@ -13,9 +14,9 @@ from core.event_service import EventService
 from core.utils.utilities import add_shadow
 from core.utils.widgets.animation_manager import AnimationManager
 from core.utils.win32.app_icons import get_window_icon
-from core.utils.win32.utilities import get_hwnd_info
+from core.utils.win32.utilities import get_app_name_from_aumid, get_app_name_from_pid, get_hwnd_info
 from core.utils.win32.windows import WinEvent
-from core.validation.widgets.yasb.active_window import VALIDATION_SCHEMA
+from core.validation.widgets.yasb.active_window import ActiveWindowConfig
 from core.widgets.base import BaseWidget
 from settings import APP_BAR_TITLE
 
@@ -45,89 +46,56 @@ class ActiveWindowWidget(BaseWidget):
     window_name_change = pyqtSignal(int, WinEvent)
     window_destroy = pyqtSignal(int, WinEvent)
     focus_change_workspaces = pyqtSignal(str)
-    validation_schema = VALIDATION_SCHEMA
+    validation_schema = ActiveWindowConfig
     event_listener = SystemEventListener
 
-    def __init__(
-        self,
-        label: str,
-        label_alt: str,
-        class_name: str,
-        callbacks: dict[str, str],
-        label_no_window: str,
-        label_icon: bool,
-        label_icon_size: int,
-        ignore_window: dict[str, list[str]],
-        monitor_exclusive: bool,
-        animation: dict[str, str],
-        max_length: int,
-        max_length_ellipsis: str,
-        container_padding: dict[str, int],
-        label_shadow: dict = None,
-        container_shadow: dict = None,
-        rewrite: list[dict] = None,
-    ):
-        super().__init__(class_name=f"active-window-widget {class_name}")
+    def __init__(self, config: ActiveWindowConfig):
+        super().__init__(class_name=f"active-window-widget {config.class_name}")
+        self.config = config
         self.dpi = None
         self._win_info = None
         self._tracked_hwnd = None
         self._show_alt = False
-        self._label = label
-        self._label_alt = label_alt
-        self._active_label = label
-        self._label_no_window = label_no_window
-        self._label_icon = label_icon
-        self._label_icon_size = label_icon_size
-        self._monitor_exclusive = monitor_exclusive
-        self._max_length = max_length
-        self._max_length_ellipsis = max_length_ellipsis
+        self._active_label = config.label
         self._event_service = EventService()
         self._update_retry_count = 0
-        self._animation = animation
-        self._padding = container_padding
-        self._label_shadow = label_shadow
-        self._container_shadow = container_shadow
-        self._rewrite_rules = rewrite
         # Construct container
         self._widget_container_layout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(
-            self._padding["left"], self._padding["top"], self._padding["right"], self._padding["bottom"]
-        )
+        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
         # Initialize container
         self._widget_container = QFrame()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self._container_shadow)
+        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
         # Add the container to the main widget layout
         self.widget_layout.addWidget(self._widget_container)
 
         self._window_title_text = QLabel()
         self._window_title_text.setProperty("class", "label")
         self._window_title_text.setTextFormat(Qt.TextFormat.PlainText)
-        self._window_title_text.setText(self._label_no_window)
-        add_shadow(self._window_title_text, self._label_shadow)
+        self._window_title_text.setText(self.config.label_no_window or "")
+        add_shadow(self._window_title_text, self.config.label_shadow.model_dump())
 
-        if self._label_icon:
+        if self.config.label_icon:
             self._window_icon_label = QLabel()
             self._window_icon_label.setProperty("class", "label icon")
-            self._window_icon_label.setText(self._label_no_window)
-            add_shadow(self._window_icon_label, self._label_shadow)
-        self._ignore_window = ignore_window
-        self._ignore_window["classes"] += IGNORED_CLASSES
-        self._ignore_window["processes"] += IGNORED_PROCESSES
-        self._ignore_window["titles"] += IGNORED_TITLES
+            self._window_icon_label.setText(self.config.label_no_window or "")
+            add_shadow(self._window_icon_label, self.config.label_shadow.model_dump())
+
+        self._ignore_window = self.config.ignore_window
+        self._ignore_window.classes += IGNORED_CLASSES
+        self._ignore_window.processes += IGNORED_PROCESSES
+        self._ignore_window.titles += IGNORED_TITLES
         self._icon_cache = dict()
-        if self._label_icon:
+        self._app_name_cache = dict()
+        if self.config.label_icon:
             self._widget_container_layout.addWidget(self._window_icon_label)
         self._widget_container_layout.addWidget(self._window_title_text)
         self.register_callback("toggle_label", self._toggle_title_text)
-        if not callbacks:
-            callbacks = {"on_left": "toggle_label", "on_middle": "do_nothing", "on_right": "toggle_label"}
-
-        self.callback_left = callbacks["on_left"]
-        self.callback_right = callbacks["on_right"]
-        self.callback_middle = callbacks["on_middle"]
+        self.callback_left = self.config.callbacks.on_left
+        self.callback_right = self.config.callbacks.on_right
+        self.callback_middle = self.config.callbacks.on_middle
 
         self.foreground_change.connect(self._on_focus_change_event)
         self._event_service.register_event(WinEvent.EventSystemForeground, self.foreground_change)
@@ -172,19 +140,21 @@ class ActiveWindowWidget(BaseWidget):
 
     def _rewrite_filter(self, text: str) -> str:
         """Applies rewrite rules to the given text."""
-        if not text or not self._rewrite_rules:
+        if not text or not self.config.rewrite:
             return text
 
-        result = text
-        for rule in self._rewrite_rules:
-            pattern, replacement, case = (rule.get(k, "") for k in ("pattern", "replacement", "case"))
+        result: str = text
+        for rule in self.config.rewrite:
+            pattern: str = rule.pattern
+            replacement: str = rule.replacement
+            case: str | None = rule.case
 
             if not pattern or not replacement:
                 continue
 
             try:
                 result, count = re.subn(pattern, replacement, result)
-                if count > 0:
+                if count > 0 and case:
                     transform = getattr(result, case, None)
                     if callable(transform):
                         result = transform()
@@ -196,9 +166,9 @@ class ActiveWindowWidget(BaseWidget):
 
     def _set_no_window_or_hide(self) -> None:
         self._tracked_hwnd = None
-        if self._label_no_window:
-            self._window_title_text.setText(self._label_no_window)
-            if self._label_icon:
+        if self.config.label_no_window:
+            self._window_title_text.setText(self.config.label_no_window)
+            if self.config.label_icon:
                 self._window_icon_label.hide()
         else:
             self.hide()
@@ -242,7 +212,8 @@ class ActiveWindowWidget(BaseWidget):
                 try:
                     fg_info = get_hwnd_info(fg)
                     if fg_info and fg_info.get("title") and fg_info.get("process"):
-                        if fg_info["process"].get("pid") != CURRENT_PROCESS_ID:
+                        fg_process = fg_info.get("process")
+                        if isinstance(fg_process, dict) and fg_process.get("pid") != CURRENT_PROCESS_ID:
                             self._on_focus_change_event(fg, WinEvent.WinEventOutOfContext)
                             return
                 except Exception:
@@ -253,10 +224,10 @@ class ActiveWindowWidget(BaseWidget):
             logging.exception(f"Failed handling destroy event for HWND {hwnd}")
 
     def _toggle_title_text(self) -> None:
-        if self._animation["enabled"]:
-            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])
+        if self.config.animation.enabled:
+            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt = not self._show_alt
-        self._active_label = self._label_alt if self._show_alt else self._label
+        self._active_label = self.config.label_alt if self._show_alt else self.config.label
         self._update_text()
 
     def _on_focus_change_event(self, hwnd: int, event: WinEvent) -> None:
@@ -273,7 +244,7 @@ class ActiveWindowWidget(BaseWidget):
         monitor_name = win_info["monitor_info"].get("device", None)
 
         if (
-            self._monitor_exclusive
+            self.config.monitor_exclusive
             and self.screen().name() != monitor_name
             and win_info.get("monitor_hwnd", "Unknown") != self.monitor_hwnd
         ):
@@ -322,7 +293,68 @@ class ActiveWindowWidget(BaseWidget):
             process = win_info["process"]
             class_name = win_info["class_name"]
 
-            if self._label_icon:
+            # For UWP apps, ApplicationFrameHost.exe owns the window;
+            # enumerate child windows to find the real app PID
+            pid_for_name = process["pid"]
+            is_uwp = class_name == "ApplicationFrameWindow"
+            if is_uwp:
+                try:
+                    parent_pid = process["pid"]
+
+                    def _find_real_pid(child_hwnd, _):
+                        _, child_pid = win32process.GetWindowThreadProcessId(child_hwnd)
+                        if child_pid and child_pid != parent_pid:
+                            return False
+                        return True
+
+                    found_pids = []
+
+                    def _collect_pids(child_hwnd, _):
+                        _, child_pid = win32process.GetWindowThreadProcessId(child_hwnd)
+                        if child_pid and child_pid != parent_pid:
+                            found_pids.append(child_pid)
+                            return False
+                        return True
+
+                    try:
+                        win32gui.EnumChildWindows(hwnd, _collect_pids, None)
+                    except Exception:
+                        pass
+                    if found_pids:
+                        pid_for_name = found_pids[0]
+                except Exception:
+                    pass
+
+            # If UWP child process isn't attached yet, retry after a short delay
+            if is_uwp and pid_for_name == process["pid"]:
+                if not hasattr(self, "_uwp_retry_count"):
+                    self._uwp_retry_count = 0
+                if self._uwp_retry_count < 5:
+                    self._uwp_retry_count += 1
+                    QTimer.singleShot(100, lambda h=hwnd: self._on_focus_change_event(h, WinEvent.WinEventOutOfContext))
+                    return
+            self._uwp_retry_count = 0
+
+            # Use cached app name if available, otherwise resolve and cache
+            app_name = self._app_name_cache.get(pid_for_name)
+            if app_name is None:
+                # For UWP apps with no separate child process (WinUI 3), use AUMID lookup
+                if is_uwp and pid_for_name == process["pid"]:
+                    try:
+                        from core.utils.win32.aumid import get_aumid_for_window
+
+                        aumid = get_aumid_for_window(hwnd)
+                        if aumid:
+                            app_name = get_app_name_from_aumid(aumid)
+                    except Exception:
+                        pass
+                # For apps with a separate child PID or Win32 apps, use PID lookup
+                if not app_name:
+                    app_name = get_app_name_from_pid(pid_for_name) or process["name"] or title
+                self._app_name_cache[pid_for_name] = app_name
+            win_info["app_name"] = app_name
+
+            if self.config.label_icon:
                 cache_key = (hwnd, title, self.dpi)
 
                 if cache_key in self._icon_cache:
@@ -332,7 +364,7 @@ class ActiveWindowWidget(BaseWidget):
                     icon_img = get_window_icon(hwnd)
                     if icon_img:
                         icon_img = icon_img.resize(
-                            (int(self._label_icon_size * self.dpi), int(self._label_icon_size * self.dpi)),
+                            (int(self.config.label_icon_size * self.dpi), int(self.config.label_icon_size * self.dpi)),
                             Image.LANCZOS,
                         ).convert("RGBA")
                     if not process["name"] == "explorer.exe":
@@ -346,9 +378,9 @@ class ActiveWindowWidget(BaseWidget):
                     self.pixmap = None
 
             if (
-                title.strip() in self._ignore_window["titles"]
-                or class_name in self._ignore_window["classes"]
-                or process["name"] in self._ignore_window["processes"]
+                title.strip() in self._ignore_window.titles
+                or class_name in self._ignore_window.classes
+                or process["name"] in self._ignore_window.processes
             ):
                 win_info["title"] = ""
                 return win_info["title"]
@@ -357,12 +389,14 @@ class ActiveWindowWidget(BaseWidget):
                     win_info["title"] = self._rewrite_filter(win_info["title"])
                 if "process" in win_info and "name" in win_info["process"]:
                     win_info["process"]["name"] = self._rewrite_filter(win_info["process"]["name"])
+                if "app_name" in win_info and win_info["app_name"]:
+                    win_info["app_name"] = self._rewrite_filter(win_info["app_name"])
 
-                if self._max_length and len(win_info["title"]) > self._max_length:
-                    truncated_title = f"{win_info['title'][: self._max_length]}{self._max_length_ellipsis}"
+                if self.config.max_length and len(win_info["title"]) > self.config.max_length:
+                    truncated_title = f"{win_info['title'][: self.config.max_length]}{self.config.max_length_ellipsis}"
                     win_info["title"] = truncated_title
-                    self._window_title_text.setText(self._label_no_window)
-                    if self._label_icon:
+                    self._window_title_text.setText(self.config.label_no_window or "")
+                    if self.config.label_icon:
                         self._window_icon_label.hide()
 
                 self._win_info = win_info
@@ -384,7 +418,7 @@ class ActiveWindowWidget(BaseWidget):
     def _update_text(self):
         try:
             self._window_title_text.setText(self._active_label.format(win=self._win_info))
-            if self._label_icon:
+            if self.config.label_icon:
                 if self.pixmap:
                     self._window_icon_label.show()
                     self._window_icon_label.setPixmap(self.pixmap)
