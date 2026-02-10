@@ -1,72 +1,42 @@
 import json
 import logging
+import re
 import urllib.request
 import urllib.parse
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from urllib.error import URLError
 import time
 import os
 from core.widgets.base import BaseWidget
-from core.validation.widgets.yasb.prayer import VALIDATION_SCHEMA
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QStyle, QVBoxLayout, QWidget
+from core.validation.widgets.yasb.prayer import PrayerTimeConfig
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 from PyQt6.QtCore import Qt, QTimer
-
-
 
 from core.utils.utilities import PopupWidget
 from core.utils.widgets.animation_manager import AnimationManager
 
+logger = logging.getLogger("prayer_widget")
+
+# Prayer times that span midnight — they belong to the following calendar day
+_NEXT_DAY_PRAYERS = {"lastthird", "firstthird"}
+
 
 class PrayerTimeWidget(BaseWidget):
-    validation_schema = VALIDATION_SCHEMA
+    validation_schema = PrayerTimeConfig
 
-    def __init__(
-        self,
-        label: str,
-        label_alt: str,
-        update_interval: int,
-        city: str,
-        country: str,
-        method: int,
-        callbacks: dict[str, str],
-        prayer_card: dict[str, str],
-        container_padding: dict[str, int],
-        animation: dict[str, str],
-        tune: dict = None,
-    ):
-        super().__init__((update_interval * 1000), class_name="prayer-time-widget")
-        self._label_content = label
-        self._label_alt_content = label_alt
-        self._city = city
-        self._country = country
-        self._method = method
-        default_tune = {
-            "Imsak": 0,
-            "Fajr": 3,
-            "Sunrise": 0,
-            "Dhuhr": 2,
-            "Asr": 3,
-            "Maghrib": 3,
-            "Sunset": 0,
-            "Isha": 3,
-            "Midnight": 0,
-        }
-        if tune:
-            default_tune.update(tune)
+    def __init__(self, config: PrayerTimeConfig):
+        super().__init__((config.update_interval * 1000), class_name="prayer-time-widget")
+        self._label_content = config.label
+        self._label_alt_content = config.label_alt
+        self._city = config.city
+        self._country = config.country
+        self._method = config.method
+
+        tune_dict = config.tune.model_dump()
         self._tune = ",".join(
-            str(default_tune[prayer])
-            for prayer in [
-                "Imsak",
-                "Fajr",
-                "Sunrise",
-                "Dhuhr",
-                "Asr",
-                "Maghrib",
-                "Sunset",
-                "Isha",
-                "Midnight",
-            ]
+            str(tune_dict[prayer])
+            for prayer in ["Imsak", "Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Sunset", "Isha", "Midnight"]
         )
         self.api_url = (
             f"http://api.aladhan.com/v1/timingsByCity"
@@ -78,26 +48,25 @@ class PrayerTimeWidget(BaseWidget):
 
         self.prayer_time_data = None
         self._show_alt_label = False
-        self._animation = animation
-        self._prayer_card: dict[str, Any] = prayer_card
-        self._padding = container_padding
+        self._animation = config.animation.model_dump()
+        self._prayer_card = config.prayer_card.model_dump()
+        self._padding = config.container_padding.model_dump()
         self._current_prayer = None
         self._prayer_start_time = None
-        self._pre_prayer_time = 5  # minutes before prayer
-        self._post_prayer_time = 10  # minutes after prayer started
+        self._current_prayer_end_time = None
+        self._pre_prayer_time = 5   # minutes before prayer to show "soon"
+        self._post_prayer_time = 10  # minutes after prayer start to keep "active"
 
         self._widget_container_layout: QHBoxLayout = QHBoxLayout()
         self._widget_container_layout.setSpacing(0)
         self._widget_container_layout.setContentsMargins(
-            self._padding["left"],
-            self._padding["top"],
-            self._padding["right"],
-            self._padding["bottom"],
+            self._padding["left"], self._padding["top"],
+            self._padding["right"], self._padding["bottom"],
         )
 
-        self._widget_container: QWidget = QWidget()
+        self._widget_container: QFrame = QFrame()
         self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "prayer-time-widget")
+        self._widget_container.setProperty("class", "widget-container")
 
         self.widget_layout.addWidget(self._widget_container)
         self._create_dynamically_label(self._label_content, self._label_alt_content)
@@ -107,164 +76,152 @@ class PrayerTimeWidget(BaseWidget):
         self.register_callback("update_label", self._update_label)
         self.register_callback("fetch_prayer_time_data", self.fetch_prayer_time_data)
 
-        self.callback_left = callbacks["on_left"]
-        self.callback_right = callbacks["on_right"]
-        self.callback_middle = callbacks["on_middle"]
+        self.callback_left = config.callbacks.on_left
+        self.callback_right = config.callbacks.on_right
+        self.callback_middle = config.callbacks.on_middle
         self.callback_timer = "fetch_prayer_time_data"
-
-        self._current_prayer_end_time = None
 
         self.start_timer()
 
-        self.last_fetch_date = None
+        self.last_fetch_date: date | None = None
         self.data_file = os.path.join(os.path.expanduser("~"), ".prayer_time_data.json")
+        self.load_saved_data()
 
-        # Fetch data if it's not available or outdated
         if not self.prayer_time_data or self.last_fetch_date != datetime.now().date():
             self.fetch_prayer_time_data()
 
-    def fetch_prayer_time_data(self):
-        if self.last_fetch_date != datetime.now().date():
-            threading.Thread(target=self._get_prayer_time_data).start()
+    # -------------------------------------------------------------------------
+    # Time helpers
+    # -------------------------------------------------------------------------
 
-    def _toggle_label(self):
-        if self._animation["enabled"]:
-            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])  # type: ignore
-        self._show_alt_label = not self._show_alt_label
-        for widget in self._widgets:
-            widget.setVisible(not self._show_alt_label)
-        for widget in self._widgets_alt:
-            widget.setVisible(self._show_alt_label)
-        self._update_label(update_class=False)
+    def parse_time(self, time_str: str, base_date: date | None = None) -> datetime | None:
+        """Parse HH:MM string into a datetime anchored to *base_date* (today by default)."""
+        if not time_str or time_str == "N/A":
+            return None
+        # Strip timezone suffix like " (PST)" that aladhan sometimes appends
+        time_str = re.sub(r"\s*\(.*?\)\s*$", "", time_str).strip()
+        try:
+            parts = time_str.split(":")
+            hours, minutes = int(parts[0]), int(parts[1])
+            anchor = base_date or datetime.now().date()
+            return datetime(anchor.year, anchor.month, anchor.day, hours, minutes, 0)
+        except (ValueError, IndexError):
+            logger.error(f"Invalid time format: {time_str!r}")
+            return None
 
-    def _toggle_card(self):
-        if self._animation["enabled"]:
-            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])  # type: ignore
-        self._popup_card()
+    def _resolve_prayer_time(self, key: str) -> datetime | None:
+        """Return the correct datetime for a prayer key, accounting for next-day wraparound."""
+        raw = self.prayer_time_data.get(key) if self.prayer_time_data else None
+        if not raw:
+            return None
+        today = datetime.now().date()
+        # lastthird / firstthird are after midnight — assign tomorrow's date
+        base = today + timedelta(days=1) if key in _NEXT_DAY_PRAYERS else today
+        return self.parse_time(raw, base)
 
-    def _popup_card(self):
-        if self.prayer_time_data is None:
-            logging.warning(f"Prayer data is not yet available. self.prayer_time_data={self.prayer_time_data}")
-            return
+    def _build_ordered_prayer_list(self) -> list[tuple[str, datetime]]:
+        """
+        Return an ordered list of (name, datetime) pairs for the full day's schedule,
+        starting from after-midnight prayers through to next day's wraparound, with all
+        times correctly dated.
+        """
+        if not self.prayer_time_data:
+            return []
+        keys_in_order = [
+            "imsak", "fajr", "sunrise", "dhuhr",
+            "asr", "maghrib", "sunset", "isha",
+            "midnight", "firstthird", "lastthird",
+        ]
+        result = []
+        for key in keys_in_order:
+            dt = self._resolve_prayer_time(key)
+            if dt is not None:
+                result.append((key, dt))
+        result.sort(key=lambda x: x[1])
+        return result
 
-        self.dialog = PopupWidget(
-            self,
-            self._prayer_card["blur"],
-            self._prayer_card["round_corners"],
-            self._prayer_card["round_corners_type"],
-            self._prayer_card["border_color"],
-        )
-        self.dialog.setProperty("class", "prayer-card")
+    # -------------------------------------------------------------------------
+    # Next-prayer logic
+    # -------------------------------------------------------------------------
 
-        main_layout = QVBoxLayout()
-        frame_today = QWidget()
-        frame_today.setProperty("class", "prayer-card-now")
-        layout_today = QVBoxLayout(frame_today)
+    def get_next_prayer(self) -> tuple[str | None, datetime | None]:
+        if not self.prayer_time_data:
+            return None, None
 
-        today_label0 = QLabel(f"{self.prayer_time_data['city']} {self._country}")
-        today_label0.setProperty("class", "label location")
-        today_label0.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        layout_today.addWidget(today_label0)
-        
-
-        now_widgets: list[QWidget] = []
-        # Create frames for each prayer
-        failed_icons: list[tuple[QLabel, str]] = []
-        prayer_names = ["fajr", "dhuhr", "asr", "maghrib", "isha"]
         now = datetime.now()
-        next_prayer, _, _ = self.time_until_next_prayer()
-        current_prayer = self._current_prayer
-        
-        for prayer in prayer_names:
-            prayer_day = QWidget()
-            now_widgets.append(prayer_day)
-            
-            # Parse the prayer time to compare with current time
-            prayer_time = self.parse_time(self.prayer_time_data[prayer])
-            
-            # Determine prayer status
-            if current_prayer and prayer.lower() == current_prayer.lower():
-                prayer_day.setProperty("class", "prayer-card-day prayer-card-day-active")
-            elif prayer.lower() == next_prayer.lower():
-                prayer_day.setProperty("class", "prayer-card-day prayer-card-day-next")
-            elif prayer_time and prayer_time < now:
-                # Prayer time has passed
-                prayer_day.setProperty("class", "prayer-card-day prayer-card-day-past")
-            else:
-                prayer_day.setProperty("class", "prayer-card-day")
-                
-            layout_day = QHBoxLayout(prayer_day)
-            name = prayer.capitalize()
-            time_prayer = self.prayer_time_data[prayer]
-            row_day_label = QLabel(f"{name}\n{time_prayer}")
-            row_day_label.setProperty("class", "label")
-            layout_day.addWidget(row_day_label)
 
-        # Additional times to show on a new row
-        extra_names = ["lastthird", "sunrise", "sunset", "firstthird", "midnight"]
-        extra_widgets: list[QWidget] = []
-        for extra in extra_names:
-            extra_day = QWidget()
-            extra_widgets.append(extra_day)
-            
-            # Parse the extra time to compare with current time
-            extra_time = self.parse_time(self.prayer_time_data[extra])
-            
-            if extra_time:
-                if current_prayer and extra.lower() == current_prayer.lower():
-                    extra_day.setProperty("class", "prayer-card-day prayer-card-day-active")
-                elif extra.lower() == next_prayer.lower():
-                    extra_day.setProperty("class", "prayer-card-day prayer-card-day-next")
-                elif extra_time < now:
-                    extra_day.setProperty("class", "prayer-card-day prayer-card-day-past")
-                else:
-                    extra_day.setProperty("class", "prayer-card-day")
-            else:
-                extra_day.setProperty("class", "prayer-card-day")
-                
-            layout_extra = QHBoxLayout(extra_day)
-            name = extra.capitalize()
-            time_extra = self.prayer_time_data[extra]
-            row_extra_label = QLabel(f"{name}\n{time_extra}")
-            row_extra_label.setProperty("class", "label")
-            layout_extra.addWidget(row_extra_label)
+        # If we're inside an active prayer window, keep reporting that prayer
+        if self._current_prayer and self._current_prayer_end_time and now < self._current_prayer_end_time:
+            return self._current_prayer, self._prayer_start_time
 
-        # Create days layout and add frames
-        prayer_layout = QHBoxLayout()
-        for widget in now_widgets:
-            prayer_layout.addWidget(widget)
+        prayer_list = self._build_ordered_prayer_list()
+        if not prayer_list:
+            return None, None
 
-        # Create extra times layout and add frames
-        extra_layout = QHBoxLayout()
-        for widget in extra_widgets:
-            extra_layout.addWidget(widget)
+        for i, (key, dt) in enumerate(prayer_list):
+            if dt > now:
+                # Check if we just passed the *previous* prayer (within post-prayer window)
+                if i > 0:
+                    prev_key, prev_dt = prayer_list[i - 1]
+                    if (now - prev_dt).total_seconds() < self._post_prayer_time * 60:
+                        return prev_key, prev_dt
+                return key, dt
 
-        # Add the "Current" label on top, days in the middle, extra times on the bottom
-        main_layout.addWidget(frame_today)
-        main_layout.addLayout(prayer_layout)
-        main_layout.addLayout(extra_layout)
+        # All prayers have passed — wrap to the first one tomorrow
+        first_key, first_dt = prayer_list[0]
+        tomorrow = now.date() + timedelta(days=1)
+        wrapped = first_dt.replace(year=tomorrow.year, month=tomorrow.month, day=tomorrow.day)
+        return first_key, wrapped
 
-        self.dialog.setLayout(main_layout)
+    def time_until_next_prayer(self) -> tuple[str, str, float]:
+        next_prayer, next_time = self.get_next_prayer()
+        if not next_prayer or not next_time:
+            return "N/A", "N/A", -1
 
-        self.dialog.adjustSize()
-        self.dialog.setPosition(
-            alignment=self._prayer_card["alignment"],
-            direction=self._prayer_card["direction"],
-            offset_left=self._prayer_card["offset_left"],
-            offset_top=self._prayer_card["offset_top"],
-        )
-        self.dialog.show()
+        now = datetime.now()
+        total_minutes = (next_time - now).total_seconds() / 60
+
+        if -self._post_prayer_time < total_minutes <= 0:
+            self._current_prayer = next_prayer
+            self._prayer_start_time = next_time
+            self._current_prayer_end_time = next_time + timedelta(minutes=self._post_prayer_time)
+            return next_prayer, "0m", 0
+
+        hours, minutes = divmod(int(abs(total_minutes)), 60)
+        time_until = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+        return next_prayer, time_until, total_minutes
+
+    # -------------------------------------------------------------------------
+    # Label
+    # -------------------------------------------------------------------------
 
     def _create_dynamically_label(self, content: str, content_alt: str):
-        def process_content(content, is_alt=False):
-            label = QLabel(content)
-            label.setProperty("class", "prayer-time-widget")
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._widget_container_layout.addWidget(label)
-            if is_alt:
-                label.hide()
-            return [label]
+        def process_content(content: str, is_alt: bool = False) -> list[QLabel]:
+            label_parts = re.split(r"(<span.*?>.*?</span>)", content)
+            label_parts = [p for p in label_parts if p]
+            widgets: list[QLabel] = []
+            for part in label_parts:
+                part = part.strip()
+                if not part:
+                    continue
+                if "<span" in part and "</span>" in part:
+                    class_match = re.search(r'class=(["\'])([^"\']+?)\1', part)
+                    class_result = class_match.group(2) if class_match else "icon"
+                    icon = re.sub(r"<span.*?>|</span>", "", part).strip()
+                    label = QLabel(icon)
+                    label.setProperty("class", class_result)
+                else:
+                    label = QLabel(part)
+                    label.setProperty("class", "label alt" if is_alt else "label")
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                label.setCursor(Qt.CursorShape.PointingHandCursor)
+                self._widget_container_layout.addWidget(label)
+                widgets.append(label)
+                if is_alt:
+                    label.hide()
+                else:
+                    label.show()
+            return widgets
 
         self._widgets = process_content(content)
         self._widgets_alt = process_content(content_alt, is_alt=True)
@@ -274,100 +231,198 @@ class PrayerTimeWidget(BaseWidget):
         label.style().polish(label)
         label.update()
 
-    def _update_label(self, update_class=True):
+    def _toggle_label(self):
+        if self._animation["enabled"]:
+            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])
+        self._show_alt_label = not self._show_alt_label
+        for w in self._widgets:
+            w.setVisible(not self._show_alt_label)
+        for w in self._widgets_alt:
+            w.setVisible(self._show_alt_label)
+        self._update_label(update_class=False)
+
+    def _update_label(self, update_class: bool = True):
         if self.prayer_time_data is None:
-            logging.warning("Prayer time data is not yet available.")
             return
 
         now = datetime.now()
         next_prayer, time_until, minutes_left = self.time_until_next_prayer()
 
         active_widgets = self._widgets_alt if self._show_alt_label else self._widgets
-        active_label_content = (
-            self._label_alt_content if self._show_alt_label else self._label_content
-        )
+        active_content = self._label_alt_content if self._show_alt_label else self._label_content
 
         try:
             for widget in active_widgets:
-                if isinstance(widget, QLabel):
-                    if self._current_prayer and now < self._current_prayer_end_time:
-                        # Current prayer is ongoing
-                        content = active_label_content.format(
-                            next_prayer=self._current_prayer,
-                            time_until="",
-                            **self.prayer_time_data
-                        )
-                        new_class = "prayer-time-widget prayer-time-active"
-                    elif minutes_left <= self._pre_prayer_time:
-                        # Within 5 minutes before prayer time
-                        content = active_label_content.format(
-                            next_prayer=next_prayer,
-                            time_until=time_until,
-                            **self.prayer_time_data
-                        )
-                        new_class = "prayer-time-widget prayer-time-soon"
-                    else:
-                        # Normal state
-                        content = active_label_content.format(
-                            next_prayer=next_prayer,
-                            time_until=time_until,
-                            **self.prayer_time_data
-                        )
-                        new_class = "prayer-time-widget"
+                if not isinstance(widget, QLabel):
+                    continue
+                if self._current_prayer and self._current_prayer_end_time and now < self._current_prayer_end_time:
+                    text = active_content.format(
+                        next_prayer=self._current_prayer, time_until="", **self.prayer_time_data
+                    )
+                    new_class = "label prayer-time-active"
+                elif minutes_left != -1 and minutes_left <= self._pre_prayer_time:
+                    text = active_content.format(
+                        next_prayer=next_prayer, time_until=time_until, **self.prayer_time_data
+                    )
+                    new_class = "label prayer-time-soon"
+                else:
+                    text = active_content.format(
+                        next_prayer=next_prayer, time_until=time_until, **self.prayer_time_data
+                    )
+                    new_class = "label"
 
-                    widget.setText(content)
+                widget.setText(text)
+                if update_class:
+                    widget.setProperty("class", new_class)
+                    self._reload_css(widget)
+                if not widget.isVisible():
+                    widget.show()
+        except Exception:
+            logger.exception("Failed to update prayer label")
 
-                    if update_class:
-                        widget.setProperty("class", new_class)
-                        self._reload_css(widget)
+    # -------------------------------------------------------------------------
+    # Popup card
+    # -------------------------------------------------------------------------
 
-                    if not widget.isVisible():
-                        widget.show()
-        except Exception as e:
-            logging.exception(f"Failed to update label: {e}")
+    def _toggle_card(self):
+        if self._animation["enabled"]:
+            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])
+        self._popup_card()
+
+    def _popup_card(self):
+        if self.prayer_time_data is None:
+            logger.warning("Prayer data not yet available")
+            return
+
+        dialog = PopupWidget(
+            self,
+            self._prayer_card["blur"],
+            self._prayer_card["round_corners"],
+            self._prayer_card["round_corners_type"],
+            self._prayer_card["border_color"],
+        )
+        dialog.setProperty("class", "prayer-card")
+
+        main_layout = QVBoxLayout(dialog)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # --- Header ---
+        header = QLabel(f"{self.prayer_time_data['city']}, {self._country}")
+        header.setProperty("class", "header")
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(header)
+
+        # --- Build prayer rows ---
+        now = datetime.now()
+        next_prayer, _, _ = self.time_until_next_prayer()
+        current_prayer = self._current_prayer
+
+        prayer_list_container = QFrame()
+        prayer_list_container.setProperty("class", "prayer-list")
+        prayer_list_layout = QVBoxLayout(prayer_list_container)
+        prayer_list_layout.setSpacing(0)
+        prayer_list_layout.setContentsMargins(0, 0, 0, 0)
+
+        for key, dt in self._build_ordered_prayer_list():
+            raw_time = self.prayer_time_data.get(key)
+            if not raw_time:
+                continue
+
+            row = QFrame()
+            row_layout = QHBoxLayout(row)
+            row_layout.setSpacing(0)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+
+            name_label = QLabel(key.capitalize())
+            name_label.setProperty("class", "prayer-name")
+
+            display_time = re.sub(r"\s*\(.*?\)\s*$", "", raw_time).strip()
+            time_label = QLabel(display_time)
+            time_label.setProperty("class", "prayer-time")
+            time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+            row_layout.addWidget(name_label)
+            row_layout.addStretch()
+            row_layout.addWidget(time_label)
+
+            is_active = bool(
+                current_prayer
+                and self._current_prayer_end_time
+                and now < self._current_prayer_end_time
+                and key.lower() == current_prayer.lower()
+            )
+            is_next = not is_active and next_prayer and key.lower() == next_prayer.lower()
+            is_past = dt < now and not is_active
+
+            if is_active:
+                row.setProperty("class", "prayer-row prayer-row-active")
+            elif is_next:
+                row.setProperty("class", "prayer-row prayer-row-next")
+            elif is_past:
+                row.setProperty("class", "prayer-row prayer-row-past")
+            else:
+                row.setProperty("class", "prayer-row")
+
+            prayer_list_layout.addWidget(row)
+
+        main_layout.addWidget(prayer_list_container)
+
+        dialog.adjustSize()
+        dialog.setPosition(
+            alignment=self._prayer_card["alignment"],
+            direction=self._prayer_card["direction"],
+            offset_left=self._prayer_card["offset_left"],
+            offset_top=self._prayer_card["offset_top"],
+        )
+        dialog.show()
+
+    # -------------------------------------------------------------------------
+    # Data fetching
+    # -------------------------------------------------------------------------
 
     def fetch_prayer_time_data(self):
-        threading.Thread(target=self._get_prayer_time_data).start()
+        threading.Thread(target=self._get_prayer_time_data, daemon=True).start()
 
     def load_saved_data(self):
         if os.path.exists(self.data_file):
             try:
                 with open(self.data_file, "r") as f:
-                    saved_data = json.load(f)
-                self.prayer_time_data = saved_data["prayer_time_data"]
-                self.last_fetch_date = datetime.fromisoformat(
-                    saved_data["last_fetch_date"]
-                )
+                    saved = json.load(f)
+                self.prayer_time_data = saved["prayer_time_data"]
+                self.last_fetch_date = date.fromisoformat(saved["last_fetch_date"])
             except (json.JSONDecodeError, KeyError, ValueError):
-                logging.error("Failed to load saved prayer time data")
+                logger.error("Failed to load saved prayer time data")
 
     def _get_prayer_time_data(self):
-        new_data = self.get_prayer_time_data(self.api_url)
+        new_data = self._fetch_from_api(self.api_url)
         if new_data:
             self.prayer_time_data = new_data
             self.last_fetch_date = datetime.now().date()
-            self.save_data()
+            self._save_data()
         QTimer.singleShot(0, self._update_label)
 
-    def save_data(self):
-        data_to_save = {
-            "prayer_time_data": self.prayer_time_data,
-            "last_fetch_date": self.last_fetch_date.isoformat(),
-        }
-        with open(self.data_file, "w") as f:
-            json.dump(data_to_save, f)
+    def _save_data(self):
+        try:
+            with open(self.data_file, "w") as f:
+                json.dump(
+                    {"prayer_time_data": self.prayer_time_data, "last_fetch_date": self.last_fetch_date.isoformat()},
+                    f,
+                )
+        except OSError:
+            logger.error("Failed to save prayer time data")
 
-    def get_prayer_time_data(self, api_url):
+    def _fetch_from_api(self, api_url: str) -> dict | None:
         max_retries = 3
-        retry_delay = 5  # seconds
+        retry_delay = 5
 
         for attempt in range(max_retries):
             try:
-                logging.info(f"Fetching prayer time data (attempt {attempt + 1})")
+                logger.info(f"Fetching prayer time data (attempt {attempt + 1})")
                 with urllib.request.urlopen(api_url, timeout=10) as response:
-                    prayer_time_data = json.loads(response.read())
-                    timings = prayer_time_data["data"]["timings"]
-                    meta = prayer_time_data["data"]["meta"]
+                    data = json.loads(response.read())
+                    timings = data["data"]["timings"]
+                    meta = data["data"]["meta"]
                     return {
                         "city": meta["timezone"].split("/")[-1].replace("_", " "),
                         "fajr": timings["Fajr"],
@@ -383,95 +438,10 @@ class PrayerTimeWidget(BaseWidget):
                         "lastthird": timings["Lastthird"],
                     }
             except (URLError, json.JSONDecodeError, KeyError) as e:
-                logging.error(f"Error occurred: {e}")
+                logger.error(f"API error: {e}")
                 if attempt < max_retries - 1:
-                    logging.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                 else:
-                    logging.error("Max retries reached. Using default values.")
+                    logger.error("Max retries reached")
                     return None
-
-    def parse_time(self, time_str):
-        if time_str == "N/A":
-            return None
-        try:
-            hours, minutes = map(int, time_str.split(":"))
-            return datetime.now().replace(
-                hour=hours, minute=minutes, second=0, microsecond=0
-            )
-        except ValueError:
-            logging.error(f"Invalid time format: {time_str}")
-            return None
-
-    def get_next_prayer(self):
-        if not self.prayer_time_data:
-            return None, None
-
-        now = datetime.now()
-        prayer_times = [
-            ("Lastthird", self.parse_time(self.prayer_time_data["lastthird"])),
-            ("Imsak", self.parse_time(self.prayer_time_data["imsak"])),
-            ("Fajr", self.parse_time(self.prayer_time_data["fajr"])),
-            ("Sunrise", self.parse_time(self.prayer_time_data["sunrise"])),
-            ("Dhuhr", self.parse_time(self.prayer_time_data["dhuhr"])),
-            ("Asr", self.parse_time(self.prayer_time_data["asr"])),
-            ("Sunset", self.parse_time(self.prayer_time_data["sunset"])),
-            ("Maghrib", self.parse_time(self.prayer_time_data["maghrib"])),
-            ("Isha", self.parse_time(self.prayer_time_data["isha"])),
-            ("Firstthird", self.parse_time(self.prayer_time_data["firstthird"])),
-        ]
-
-        # Filter out None values
-        prayer_times = [
-            (prayer, time) for prayer, time in prayer_times if time is not None
-        ]
-
-        if not prayer_times:
-            return None, None
-
-        # Check if current prayer is still ongoing
-        if (
-            self._current_prayer
-            and self._current_prayer_end_time
-            and now < self._current_prayer_end_time
-        ):
-            return self._current_prayer, self._prayer_start_time
-
-        for i, (prayer, time) in enumerate(prayer_times):
-            if time > now:
-                if i > 0:
-                    prev_prayer, prev_time = prayer_times[i - 1]
-                    if (now - prev_time).total_seconds() < 600:  # 10 minutes
-                        return prev_prayer, prev_time
-                return prayer, time
-
-        # If all prayers have passed, return the first prayer of the next day
-        next_day = now.date() + timedelta(days=1)
-        return prayer_times[0][0], prayer_times[0][1].replace(day=next_day.day)
-
-    def time_until_next_prayer(self):
-        next_prayer, next_time = self.get_next_prayer()
-        if not next_prayer or not next_time:
-            return "N/A", "N/A", -1
-
-        now = datetime.now()
-        time_diff = next_time - now
-
-        total_minutes = time_diff.total_seconds() / 60
-
-        if (
-            total_minutes <= 0 and total_minutes > -10
-        ):  # Within 10 minutes after prayer start
-            self._current_prayer = next_prayer
-            self._prayer_start_time = next_time
-            self._current_prayer_end_time = next_time + timedelta(minutes=10)
-            return next_prayer, "0m", 0
-
-        hours, minutes = divmod(int(abs(total_minutes)), 60)
-
-        if hours > 0:
-            time_until = f"{hours}h {minutes}m"
-        else:
-            time_until = f"{minutes}m"
-
-        return next_prayer, time_until, total_minutes
+        return None
