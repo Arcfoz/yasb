@@ -74,6 +74,8 @@ class _ForegroundPoller:
         self._last_result: _ForegroundPollResult | None = None
 
     def register(self, callback):
+        if callback in self._callbacks:
+            return
         self._callbacks.append(callback)
         if len(self._callbacks) == 1:
             self._timer.start()
@@ -88,8 +90,13 @@ class _ForegroundPoller:
 
     def _broadcast(self, result: _ForegroundPollResult):
         self._last_result = result
-        for cb in self._callbacks:
-            cb(result)
+        for cb in list(self._callbacks):
+            try:
+                cb(result)
+            except RuntimeError:
+                self.unregister(cb)
+            except Exception:
+                self.unregister(cb)
 
     def _poll(self):
         try:
@@ -104,7 +111,7 @@ class _ForegroundPoller:
             if pid == CURRENT_PROCESS_ID:
                 return
 
-            # Fast path — same window as last poll, only re-check dynamic state
+            # Fast path - same window as last poll, only re-check dynamic state
             if hwnd == self._last_hwnd and self._last_result is not None and self._last_result.valid:
                 try:
                     maximized = is_window_maximized(hwnd)
@@ -148,13 +155,13 @@ class _ForegroundPoller:
                 except Exception:
                     pass
 
-            # Resolve app name (cached by pid — handles UWP + Win32 apps)
+            # Resolve app name (cached by pid - handles UWP + Win32 apps)
             app_name = self._app_name_cache.get(pid_for_name)
             if app_name is None:
                 app_name = get_app_name_from_pid(pid_for_name) or title
                 # For UWP only cache if we got the real child PID (not ApplicationFrameHost)
                 if is_uwp and pid_for_name == pid:
-                    # CoreWindow not ready yet — don't cache, don't set _last_hwnd
+                    # CoreWindow not ready yet - don't cache, don't set _last_hwnd
                     # so next poll retries the full path
                     self._last_hwnd = 0
                 else:
@@ -194,6 +201,16 @@ class WindowControlsWidget(BaseWidget):
         self._opacity_effect.setOpacity(0.0)
         self._widget_container.setGraphicsEffect(self._opacity_effect)
 
+        # Optional app name label
+        self._app_name_label: QLabel | None = None
+        if self.config.show_app_name:
+            self._app_name_label = QLabel()
+            self._app_name_label.setProperty("class", "app-name")
+
+        # Render app name before buttons when configured on the left.
+        if self._app_name_label is not None and self.config.app_name_position == "left":
+            self._widget_container_layout.addWidget(self._app_name_label)
+
         # Create buttons in configured order
         self._buttons: dict[str, QPushButton] = {}
         for btn_name in self.config.buttons:
@@ -206,11 +223,8 @@ class WindowControlsWidget(BaseWidget):
             self._widget_container_layout.addWidget(btn)
             self._buttons[btn_name] = btn
 
-        # Optional app name label
-        self._app_name_label = None
-        if self.config.show_app_name:
-            self._app_name_label = QLabel()
-            self._app_name_label.setProperty("class", "app-name")
+        # Render app name after buttons when configured on the right.
+        if self._app_name_label is not None and self.config.app_name_position == "right":
             self._widget_container_layout.addWidget(self._app_name_label)
 
         # Start hidden
@@ -218,7 +232,24 @@ class WindowControlsWidget(BaseWidget):
 
         # Register with shared singleton poller
         self._poller = _ForegroundPoller.instance()
+        self._poller_registered = False
         self._poller.register(self._on_poll_result)
+        self._poller_registered = True
+        self.destroyed.connect(self._cleanup_poller)
+
+    def _cleanup_poller(self) -> None:
+        if not getattr(self, "_poller_registered", False):
+            return
+        try:
+            self._poller.unregister(self._on_poll_result)
+        except Exception:
+            pass
+        self._poller_registered = False
+
+    def closeEvent(self, event):
+        self._cleanup_poller()
+        self._stop_running_animations()
+        super().closeEvent(event)
 
     def _make_button_handler(self, btn_name: str):
         """Create a clicked handler for a specific button."""

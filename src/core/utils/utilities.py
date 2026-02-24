@@ -433,8 +433,13 @@ def format_pydantic_errors_to_yaml(exc: ValidationError) -> str:
     return yaml.dump(tree, default_flow_style=False, sort_keys=False)
 
 
-def build_widget_label(self, content: str, content_alt: str = None, content_shadow: dict = None):
-    def process_content(content, is_alt=False):
+def build_widget_label(
+    self: QWidget,
+    content: str,
+    content_alt: str | None = None,
+    content_shadow: dict[str, Any] | None = None,
+):
+    def process_content(content: str, is_alt: bool = False) -> list[QLabel]:
         label_parts = re.split("(<span.*?>.*?</span>)", content)
         label_parts = [part for part in label_parts if part]
         widgets = []
@@ -550,6 +555,7 @@ class PopupWidget(QWidget):
         round_corners: bool = False,
         round_corners_type: str = "normal",
         border_color: str = "None",
+        dark_mode: bool = False,
     ):
         super().__init__(parent)
 
@@ -564,6 +570,7 @@ class PopupWidget(QWidget):
         self._round_corners = round_corners
         self._round_corners_type = round_corners_type
         self._border_color = border_color
+        self._dark_mode = dark_mode
         self._parent = parent
         self._suspend_close = False
         # We need bar_id for global_state autohide manager
@@ -733,7 +740,7 @@ class PopupWidget(QWidget):
             Blur(
                 self.winId(),
                 Acrylic=True if is_windows_10() else False,
-                DarkMode=False,
+                DarkMode=self._dark_mode,
                 RoundCorners=False if is_windows_10() else self._round_corners,
                 RoundCornersType=self._round_corners_type,
                 BorderColor=self._border_color,
