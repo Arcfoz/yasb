@@ -1,37 +1,26 @@
 # GPU Widget Configuration
 
-> [!NOTE]
-> This widget currently works only with NVIDIA GPUs and requires the `nvidia-smi` tool to be available (either in your system PATH or accessible by full path). In most cases, `nvidia-smi` is installed automatically with the NVIDIA driver and added to your PATH, but on some systems you may need to add it manually or use the full path to the executable. It will not function with AMD or Intel GPUs.
-
-**How to verify `nvidia-smi` is available:**
-
-Open a terminal or command prompt and run:
-
-```sh
-nvidia-smi
-```
-
-If you see a table with your GPU information, `nvidia-smi` is available. If you get an error like "command not found" or "not recognized as an internal or external command," you may need to add it to your PATH or use the full path to the executable (e.g., `C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe`).
 
 | Option                | Type    | Default                                                                 | Description                                                                 |
 |-----------------------|---------|-------------------------------------------------------------------------|-----------------------------------------------------------------------------|
 | `label`               | string  | `"<span>\uf4bc</span> {info[utilization]}%"`                              | The primary label format.                                                   |
-| `label_alt`           | string  | `"<span>\uf4bc</span> {info[temp]}°C | {info[mem_used]} / {info[mem_total]}"`                 | The alternative label format.                                               |
-| `class_name`        | string  | `""`                                                                                  | Additional CSS class name for the widget.                                    |
-| `gpu_index`          | integer | `0`                                                                     | The index of the GPU to monitor (0 for the first GPU, 1 for the second, etc.). |
+| `label_alt`           | string  | `"<span>\uf4bc</span> {info[temp]}°C | {info[mem_used]} / {info[mem_total]}"` | The alternative label format.                                               |
+| `class_name`          | string  | `""`                                                                    | Additional CSS class name for the widget.                                   |
+| `gpu_index`           | integer | `0`                                                                     | The index of the GPU to monitor (0 for the first GPU, 1 for the second, etc.). |
 | `update_interval`     | integer | `1000`                                                                  | The interval in milliseconds to update the widget.                          |
 | `histogram_icons`     | list    | `["\u2581", "\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"]` | Icons representing GPU utilization histograms.                              |
-| `histogram_num_columns` | integer | `10`                                                                    | The number of columns in the histogram.                                     |
+| `histogram_num_columns` | integer | `10`                                                                  | The number of columns in the histogram.                                     |
 | `callbacks`           | dict    | `{'on_left': 'toggle_label', 'on_middle': 'do_nothing', 'on_right': 'do_nothing'}` | Callback functions for different mouse button actions.                      |
 | `gpu_thresholds`      | dict    | `{'low': 25, 'medium': 50, 'high': 90}`                                 | Thresholds for GPU utilization levels.                                      |
 | `animation`           | dict    | `{'enabled': true, 'type': 'fadeInOut', 'duration': 200}`               | Animation settings for the widget.                                          |
-| `container_shadow`    | dict    | `{"enabled": False, "color": "black", "offset": [1, 1], "radius": 3}`                                                                  | Container shadow options.                                                   |
-| `label_shadow`        | dict    | `{"enabled": False, "color": "black", "offset": [1, 1], "radius": 3}`                                                                  | Label shadow options.                                                       |
+| `container_shadow`    | dict    | `{"enabled": False, "color": "black", "offset": [1, 1], "radius": 3}`  | Container shadow options.                                                   |
+| `label_shadow`        | dict    | `{"enabled": False, "color": "black", "offset": [1, 1], "radius": 3}`  | Label shadow options.                                                       |
 | `progress_bar`        | dict    | `{'enabled': false, 'position': 'left', 'size': 14, 'thickness': 2, 'color': '#57948a', 'animation': false}` | Progress bar settings.                                                      |
-| `hide_decimal`        | bool    | `false`                                                                 | Whether to hide decimal places in the GPU widget.                          |
-| `units`               | string  | `"metric"`                                                              | Whether the temperature is converted to Fahrenheit (if set to `"imperial"`) or Celsius (if not set or explicitly set to `"metric"`) |
+| `hide_decimal`        | bool    | `false`                                                                 | Hide decimal places for utilization, temperature, and power draw values.    |
+| `units`               | string  | `"metric"`                                                              | Temperature unit: `"metric"` for Celsius, `"imperial"` for Fahrenheit.     |
+| `menu`                | dict    | See below                                                               | Configuration for the popup menu with graph and stats. |
 
-> **About `index`:** If you have multiple NVIDIA GPUs, you can set the `gpu_index` option to select which GPU to monitor. Create multiple GPU widgets with different `gpu_index` values (e.g., 0, 1, 2, ...) to display stats for each card separately.
+> **About `gpu_index`:** If you have multiple GPUs, set `gpu_index` to select which one to monitor. Create multiple GPU widgets with different `gpu_index` values (e.g., 0, 1, 2, ...) to display stats for each card separately.
 
 ## Example Configuration
 
@@ -59,6 +48,12 @@ gpu:
     histogram_num_columns: 8
     callbacks:
       on_left: "toggle_label"
+      on_right: "toggle_menu"
+    menu:
+      enabled: true
+      show_graph: true
+      show_graph_grid: true
+      graph_history_size: 60
 ```
 
 ## Description of Options
@@ -83,19 +78,41 @@ gpu:
   - **color**: The color of the progress bar. Color can be single color or gradient.
   - **background_color**: The background color of the progress bar.
   - **animation**: Whether to enable smooth change of the progress bar value.
+- **menu**: Configuration for the popup menu that displays a usage graph and detailed GPU statistics. It includes:
+  - **enabled**: Whether the popup menu is enabled. Default: `false`.
+  - **blur**: Whether to apply a blur effect to the popup background. Default: `true`.
+  - **round_corners**: Whether the popup has rounded corners. Default: `true`.
+  - **round_corners_type**: The type of rounded corners, either `"normal"` or `"small"`. Default: `"normal"`.
+  - **border_color**: The border color of the popup. Default: `"System"`.
+  - **alignment**: Horizontal alignment of the popup relative to the widget: `"left"`, `"center"`, or `"right"`. Default: `"right"`.
+  - **direction**: Whether the popup opens `"up"` or `"down"`. Default: `"down"`.
+  - **offset_top**: Vertical offset in pixels from the widget. Default: `6`.
+  - **offset_left**: Horizontal offset in pixels from the widget. Default: `0`.
+  - **show_graph**: Whether to show the usage history graph. Default: `true`.
+  - **show_graph_grid**: Whether to display a square grid overlay on the graph. Default: `false`.
+  - **graph_history_size**: Number of data points to keep in the graph history. Must be between 10 and 180. Default: `60`.
+  - **pin_icon**: Icon displayed on the pin button when the popup is unpinned. Default: `"\ue718"`.
+  - **unpin_icon**: Icon displayed on the pin button when the popup is pinned. Default: `"\ue77a"`.
 
 ## Available Placeholders
 
-- `{info[index]}` - GPU index (index of the GPU in the system, starting from 0)
-- `{info[utilization]}` - GPU utilization percentage
-- `{info[mem_total]}` - Total GPU memory
-- `{info[mem_used]}` - Used GPU memory
-- `{info[mem_free]}` - Free GPU memory
-- `{info[temp]}` - GPU temperature (°C)
-- `{info[fan_speed]}` - GPU fan speed (if available, in percentage)
-- `{info[power_draw]}` - GPU power draw exactly in watts if available.
-- `{info[histograms][utilization]}` - GPU utilization histogram using configured icons
-- `{info[histograms][mem_used]}` - GPU memory usage histogram using configured icons
+| Placeholder | Description |
+|-------------|-------------|
+| `{info[index]}` | GPU index (starting from 0) |
+| `{info[name]}` | GPU name |
+| `{info[utilization]}` | GPU utilization (%) |
+| `{info[mem_total]}` | Total dedicated VRAM |
+| `{info[mem_used]}` | Dedicated VRAM in use |
+| `{info[mem_free]}` | Dedicated VRAM free |
+| `{info[mem_shared_total]}` | Total shared system memory available to the GPU (useful for integrated GPUs) |
+| `{info[mem_shared_used]}` | Shared system memory currently in use by the GPU |
+| `{info[temp]}` | GPU temperature (°C or °F depending on `units`) |
+| `{info[fan_speed]}` | Fan speed (%, 0 if unavailable) |
+| `{info[power_draw]}` | Power draw (W, 0 if unavailable) |
+| `{info[histograms][utilization]}` | Utilization history histogram |
+| `{info[histograms][mem_used]}` | Memory usage history histogram |
+
+> **Note on `mem_shared_*`:** Integrated GPUs (e.g., Intel HD Graphics, AMD Radeon integrated) have little or no dedicated VRAM and use system RAM instead. For these GPUs use `mem_shared_total` / `mem_shared_used` to see the actual memory usage.
 
 
 ## Example Style
@@ -112,5 +129,90 @@ gpu:
 .gpu-widget .label.status-high {}
 .gpu-widget .label.status-critical {}
 /* GPU progress bar styles if enabled */
-.gpu-widget .progress-circle {} 
+.gpu-widget .progress-circle {}
+```
+
+### Popup Menu Styles
+```css
+.gpu-popup {
+    background-color: rgba(28, 28, 28, 0.7);
+    min-width: 400px;
+}
+
+.gpu-popup .header {
+    background: transparent;
+    padding: 12px 16px;
+}
+.gpu-popup .header .text {
+    font-size: 16px;
+    font-family: "Segoe UI";
+    color: rgb(255, 255, 255);
+}
+.gpu-popup .header .pin-btn {
+    font-size: 14px;
+    background: transparent;
+    font-family: "Segoe Fluent Icons";
+    border: none;
+    padding: 6px;
+    color: rgba(255, 255, 255, 0.6);
+}
+.gpu-popup .header .pin-btn:hover {
+    color: rgba(255, 255, 255, 0.6);
+}
+.gpu-popup .header .pin-btn.pinned {
+    color: #ffffff;
+}
+/* Graph area */
+.gpu-popup .graph-container {
+    background:  transparent;
+    min-height: 64px;
+}
+.gpu-popup .gpu-graph {
+    color: #0f6bff;   /* set the graph line/fill color */
+}
+.gpu-popup .gpu-graph-grid {
+    color: rgba(255, 255, 255, 0.05);  /* set the grid line color */
+}
+.gpu-popup .gpu-temp-graph {
+    color: #ff6b35;  /* orange for temperature */
+}
+.gpu-popup .gpu-temp-graph-grid {
+    color: rgba(255, 255, 255, 0.05);  /* set the grid line color */
+}
+.gpu-popup .graph-title {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    font-family: 'Segoe UI';
+    padding: 0px 0px 4px 14px;
+    margin-top: 12px; /* Add top margin to separate from 2nd graph */
+}
+.gpu-popup .graph-title.first {
+    margin-top: 0px; /* Remove top margin for the first graph title */
+}
+/* Stats grid */
+.gpu-popup .stats {
+    background: transparent;
+    padding: 16px;
+}
+.gpu-popup .stats .stat-item {
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin: 8px;
+}
+.gpu-popup .stats .stat-label {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.65);
+    font-family: 'Segoe UI';
+    font-weight: 400;
+    padding: 6px 4px 2px 4px;
+}
+.gpu-popup .stats .stat-value {
+    font-size: 20px;
+    font-weight: 700;
+    color: #ffffff;
+    font-family: 'Segoe UI';
+    padding: 0 4px 12px 4px;
+}
 ```

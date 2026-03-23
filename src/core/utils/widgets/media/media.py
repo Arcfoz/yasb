@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from PIL import Image
 from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtWidgets import QApplication
 from qasync import asyncSlot  # type: ignore
 from winrt.windows.media.control import (
     GlobalSystemMediaTransportControlsSession,
@@ -68,6 +69,10 @@ class WindowsMedia(QObject, metaclass=QSingleton):
 
         self._loop.create_task(self.run())
 
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._on_quit)
+
     @property
     def current_session(self) -> SessionState | None:
         """Get the current session state"""
@@ -89,13 +94,23 @@ class WindowsMedia(QObject, metaclass=QSingleton):
             while self._running:
                 self._interpolate_and_emit(self._trackers)
                 await asyncio.sleep(REFRESH_INTERVAL)
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             logger.error(f"Failed to start WindowsMedia worker: {e}", exc_info=True)
+        finally:
             self._running = False
 
-    async def stop(self):
-        """Stop the WindowsMedia worker refresh loop"""
+    def _on_quit(self):
+        """Unsubscribe all WinRT event handlers on application quit"""
         self._running = False
+        for state in list(self._trackers.values()):
+            for cb in state.cleanup_callbacks:
+                try:
+                    cb()
+                except Exception:
+                    pass
+        self._trackers.clear()
 
     async def _refresh_sessions(self, manager: SessionManager):
         """Refresh session states from the manager"""
@@ -234,11 +249,21 @@ class WindowsMedia(QObject, metaclass=QSingleton):
 
         self.media_data_changed.emit(trackers)
 
+    def _safe_create_task(self, callback: Callable[[Any], Any], sender: Any) -> None:
+        """Create a task on the loop, silently ignoring shutdown races."""
+        try:
+            self._loop.create_task(callback(sender))
+        except RuntimeError:
+            pass
+
     def _create_callback_bridge(self, callback: Callable[[Any], Any]):
         """Create a callback bridge to run from WinRT thread"""
 
         def wrapper(s: Any, _a: Any) -> None:
-            self._loop.call_soon_threadsafe(lambda: asyncio.create_task(callback(s)))
+            try:
+                self._loop.call_soon_threadsafe(self._safe_create_task, callback, s)
+            except RuntimeError:
+                pass
 
         return wrapper
 

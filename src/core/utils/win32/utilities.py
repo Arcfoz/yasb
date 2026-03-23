@@ -1,6 +1,7 @@
 import ctypes
 import ctypes.wintypes
 import logging
+import platform
 import winreg
 from contextlib import suppress
 from ctypes import GetLastError, byref, c_ulong, create_unicode_buffer
@@ -23,6 +24,7 @@ from core.utils.win32.bindings import (
     QueryFullProcessImageNameW,
     SetForegroundWindow,
 )
+from core.utils.win32.bindings.kernel32 import GetCurrentProcess, IsWow64Process2
 from core.utils.win32.constants import (
     ACCESS_DENIED,
     DWMWA_EXTENDED_FRAME_BOUNDS,
@@ -33,8 +35,63 @@ from core.utils.win32.constants import (
 )
 
 
-def get_monitor_hwnd(window_hwnd: int) -> int:
-    return int(MonitorFromWindow(window_hwnd))
+def get_windows_host_arch():
+    """Returns the actual host machine architecture on Windows,
+    bypassing emulation layers like Prism."""
+
+    PROCESS_MACHINE_UNKNOWN = 0
+    IMAGE_FILE_MACHINE_AMD64 = 0x8664
+    IMAGE_FILE_MACHINE_ARM64 = 0xAA64
+    IMAGE_FILE_MACHINE_I386 = 0x014C
+
+    arch_map = {
+        IMAGE_FILE_MACHINE_AMD64: "AMD64",
+        IMAGE_FILE_MACHINE_ARM64: "ARM64",
+        IMAGE_FILE_MACHINE_I386: "x86",
+        PROCESS_MACHINE_UNKNOWN: "Unknown",
+    }
+
+    process_machine = ctypes.c_ushort(0)
+    native_machine = ctypes.c_ushort(0)
+
+    # IsWow64Process2 available since Windows 10 1511 / Server 2016
+    try:
+        result = IsWow64Process2(
+            GetCurrentProcess(),
+            ctypes.byref(process_machine),
+            ctypes.byref(native_machine),
+        )
+        if result:
+            return arch_map.get(native_machine.value, f"Unknown(0x{native_machine.value:04X})")
+    except AttributeError:
+        pass  # API not available
+
+    # Fallback: trust platform.machine() — old enough Windows = definitely x64
+    return platform.machine()
+
+
+def is_running_under_emulation():
+    """Returns True if the current process is running under WOW64 emulation
+    (e.g. x64 process on ARM64 host)."""
+
+    process_machine = ctypes.c_ushort(0)
+    native_machine = ctypes.c_ushort(0)
+
+    try:
+        if IsWow64Process2(GetCurrentProcess(), ctypes.byref(process_machine), ctypes.byref(native_machine)):
+            # If process_machine is not 0, it's running under emulation
+            return process_machine.value != 0
+    except AttributeError, Exception:
+        pass
+
+    return False
+
+
+def get_monitor_hwnd(window_hwnd: int) -> int | None:
+    monitor = MonitorFromWindow(window_hwnd)
+    if monitor is None:
+        return None
+    return int(monitor)
 
 
 def get_monitor_info(monitor_hwnd: int) -> dict:
@@ -340,8 +397,8 @@ def set_foreground_hwnd(hwnd):
         SetForegroundWindow(int(hwnd))
 
 
-def find_focused_screen(follow_mouse, follow_window, screens=None):
-    """Find the screen that should be focused based on mouse position or active window."""
+def find_focused_screen(follow_mouse, follow_window, follow_primary=False, screens=None):
+    """Find the screen that should be focused based on mouse position, active window, or primary screen."""
 
     qt_screens = QApplication.screens()
     primary_screen = QApplication.primaryScreen()
@@ -358,6 +415,10 @@ def find_focused_screen(follow_mouse, follow_window, screens=None):
         for geo in [screen.geometry()]
     }
 
+    if follow_primary:
+        if primary_screen is not None and is_valid(primary_screen.name()):
+            return primary_screen.name()
+
     if follow_mouse:
         try:
             pos = QCursor.pos()
@@ -371,10 +432,11 @@ def find_focused_screen(follow_mouse, follow_window, screens=None):
         hwnd = win32gui.GetForegroundWindow()
         if hwnd:
             monitor = get_monitor_hwnd(hwnd)
-            device_name = win32api.GetMonitorInfo(monitor).get("Device")
-            screen_name = device_to_screen.get(device_name)
-            if screen_name and is_valid(screen_name):
-                return screen_name
+            if monitor is not None:
+                device_name = win32api.GetMonitorInfo(monitor).get("Device")
+                screen_name = device_to_screen.get(device_name)
+                if screen_name and is_valid(screen_name):
+                    return screen_name
 
     # Fallback to primary screen
     if primary_screen is not None and is_valid(primary_screen.name()):

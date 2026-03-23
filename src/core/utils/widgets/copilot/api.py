@@ -103,6 +103,13 @@ class CopilotDataManager:
         return cls._data
 
     @classmethod
+    def set_token(cls, token: str) -> None:
+        """Update the token after OAuth and trigger an immediate fetch."""
+        cls._token = token
+        cls._username = ""  # Reset cached username so it is re-fetched with new token
+        cls.get_instance()._start_update()
+
+    @classmethod
     def refresh(cls) -> None:
         """Manually trigger a data refresh."""
         cls.get_instance()._start_update()
@@ -197,7 +204,13 @@ class CopilotDataManager:
         except urllib.error.HTTPError as e:
             return None, e.code, None
         except urllib.error.URLError as e:
-            error = "Request timed out" if "timed out" in str(e.reason).lower() else f"Connection error: {e.reason}"
+            reason = str(e.reason).lower()
+            if "timed out" in reason:
+                error = "Request timed out"
+            elif "getaddrinfo" in reason or "name or service not known" in reason or "no such host" in reason:
+                error = "No internet connection"
+            else:
+                error = "Connection failed"
             return None, 0, error
         except json.JSONDecodeError:
             return None, 0, "Invalid JSON response"
