@@ -4,24 +4,18 @@ from enum import StrEnum, auto
 from typing import override
 
 from PIL import Image
-from PyQt6.QtCore import Qt, QTimer, pyqtSlot
-from PyQt6.QtGui import QCursor, QImage, QMouseEvent, QPixmap, QShowEvent, QWheelEvent
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
+from PyQt6.QtCore import Qt, pyqtSlot
+from PyQt6.QtGui import QImage, QMouseEvent, QPixmap, QShowEvent, QWheelEvent
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
-from core.utils.utilities import add_shadow, refresh_widget_style
-from core.utils.widgets.glazewm.client import GlazewmClient, Monitor, Window, Workspace
+from core.utils.utilities import refresh_widget_style
 from core.utils.win32.app_icons import get_window_icon
-from core.utils.win32.utilities import get_monitor_hwnd, get_process_info
+from core.utils.win32.utils import get_monitor_hwnd, get_process_info
 from core.validation.widgets.glazewm.workspaces import GlazewmWorkspacesConfig
 from core.widgets.base import BaseWidget
-from settings import DEBUG
+from core.widgets.services.glazewm.client import GlazewmClient, Monitor, Window, Workspace
 
 logger = logging.getLogger("glazewm_workspaces")
-
-if DEBUG:
-    logger.setLevel(logging.DEBUG)
-else:
-    logger.setLevel(logging.CRITICAL)
 
 
 class WorkspaceStatus(StrEnum):
@@ -58,7 +52,7 @@ class GlazewmWorkspaceButton(QPushButton):
         self.workspace_window_count = 0
         self.status = WorkspaceStatus.EMPTY
         self.clicked.connect(self._activate_workspace)  # type: ignore
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, self.sizePolicy().verticalPolicy())
         self._update_status()
 
     def update_button(self):
@@ -130,7 +124,7 @@ class GlazewmWorkspaceButton(QPushButton):
         elif self.status == WorkspaceStatus.EMPTY:
             self.setText(empty_label)
         else:
-            logger.warning(f"Unknown workspace status: {self.status}")
+            logger.warning("Unknown workspace status: %s", self.status)
 
 
 class GlazewmWorkspaceButtonWithIcons(QFrame):
@@ -138,7 +132,7 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
         self,
         workspace_name: str,
         client: GlazewmClient,
-        parent_widget: "GlazewmWorkspacesWidget",
+        parent_widget: GlazewmWorkspacesWidget,
         config: GlazewmWorkspacesConfig,
         display_name: str | None = None,
         windows: list[Window] | None = None,
@@ -154,10 +148,10 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
         self.is_displayed = False
         self.is_focused = False
         self.status = WorkspaceStatus.EMPTY
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._animation_initialized = False
         self.workspace_window_count = 0
         self.windows = windows
+
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, self.sizePolicy().verticalPolicy())
 
         self.button_layout = QHBoxLayout(self)
         self.button_layout.setContentsMargins(0, 0, 0, 0)
@@ -167,7 +161,6 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
         self.text_label.setProperty("class", "label")
         self.text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.button_layout.addWidget(self.text_label)
-        add_shadow(self.text_label, self.config.label_shadow.model_dump())
 
         self.icons = {}
         self.icon_labels = []
@@ -232,7 +225,7 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
         elif self.status == WorkspaceStatus.EMPTY:
             self.text_label.setText(empty_label)
         else:
-            logger.warning(f"Unknown workspace status: {self.status}")
+            logger.warning("Unknown workspace status: %s", self.status)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -304,8 +297,7 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
                     return None
 
         except Exception:
-            if DEBUG:
-                logging.exception(f"Failed to get icons for window with HWND {hwnd}")
+            logging.debug("Failed to get icons for window with HWND %s", hwnd, exc_info=True)
             return None
 
     def _update_icons(self):
@@ -325,7 +317,6 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
             if self.config.app_icons.max_icons > 0:
                 icons_list = icons_list[: self.config.app_icons.max_icons]
 
-        prev_icon_count = len(self.icon_labels)
         # Remove extra QLabel widgets if there are more than needed
         for extra_label in self.icon_labels[len(icons_list) :]:
             self.button_layout.removeWidget(extra_label)
@@ -341,58 +332,12 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
                 icon_label.setProperty("class", f"icon icon-{index + 1}")
                 icon_label.setPixmap(icon)
                 self.button_layout.addWidget(icon_label)
-                add_shadow(icon_label, self.config.label_shadow.model_dump())
                 self.icon_labels.append(icon_label)
-
-        curr_icon_count = len(icons_list)
 
         if self.config.app_icons.hide_label and len(self.icon_labels) > 0:
             self.text_label.hide()
         else:
             self.text_label.show()
-
-        if curr_icon_count < prev_icon_count:
-            if self.config.animation and self._animation_initialized:
-                self._animate_buttons()
-
-    def _animate_buttons(self, duration=200, step=30):
-        # Store the initial width if not already stored (to enable reverse animations)
-        if not hasattr(self, "_initial_width"):
-            self._initial_width = self.width()
-
-        self._current_width = self.width()
-        target_width = self.sizeHint().width()
-        if (
-            not self.config.app_icons.enabled_active
-            and (self.config.app_icons.enabled_focused == None or not self.config.app_icons.enabled_focused)
-            and self.config.app_icons.enabled_populated
-        ):
-            for icon_label in self.icon_labels:
-                target_width += icon_label.sizeHint().width()
-
-        step_duration = int(duration / step)
-        width_increment = (target_width - self._current_width) / step
-        self._current_step = 0
-
-        def update_width():
-            if self._current_step < step:
-                self._current_width += width_increment
-                self.setFixedWidth(int(self._current_width))
-                self._current_step += 1
-            else:
-                # Animation done: stop timer and set to target exactly
-                self._animation_timer.stop()
-                self.setMinimumWidth(target_width)
-                self.setMaximumWidth(16777215)
-
-        # Stop any existing timer before starting a new one to prevent conflicts
-        if hasattr(self, "_animation_timer") and self._animation_timer.isActive():
-            self._animation_timer.stop()
-
-        # Parent the timer to the widget to avoid potential memory leaks
-        self._animation_timer = QTimer(self)
-        self._animation_timer.timeout.connect(update_width)
-        self._animation_timer.start(step_duration)
 
 
 class GlazewmWorkspacesWidget(BaseWidget):
@@ -415,8 +360,6 @@ class GlazewmWorkspacesWidget(BaseWidget):
 
         self.offline_text = QLabel(self.config.offline_label)
         self.offline_text.setProperty("class", "offline-status")
-
-        add_shadow(self.workspace_container, self.config.container_shadow.model_dump())
 
         self.widget_layout.addWidget(self.offline_text)
         self.widget_layout.addWidget(self.workspace_container)
@@ -486,7 +429,6 @@ class GlazewmWorkspacesWidget(BaseWidget):
                         config=self.config,
                         display_name=workspace.display_name,
                     )
-                add_shadow(btn, self.config.btn_shadow.model_dump())
 
             btn.monitor_exclusive = self.config.monitor_exclusive
             btn.workspace_name = workspace.name

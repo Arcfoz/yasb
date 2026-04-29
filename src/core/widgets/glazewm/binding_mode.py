@@ -2,21 +2,14 @@ import logging
 import re
 
 from PyQt6.QtCore import pyqtSlot
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel
+from PyQt6.QtWidgets import QLabel
 
-from core.utils.utilities import add_shadow, build_widget_label, refresh_widget_style
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.glazewm.client import BindingMode, GlazewmClient
+from core.utils.utilities import refresh_widget_style
 from core.validation.widgets.glazewm.binding_mode import GlazewmBindingModeConfig
 from core.widgets.base import BaseWidget
-from settings import DEBUG
+from core.widgets.services.glazewm.client import BindingMode, GlazewmClient
 
 logger = logging.getLogger("glazewm_binding_mode")
-
-if DEBUG:
-    logger.setLevel(logging.DEBUG)
-else:
-    logger.setLevel(logging.CRITICAL)
 
 
 class GlazewmBindingModeWidget(BaseWidget):
@@ -34,22 +27,8 @@ class GlazewmBindingModeWidget(BaseWidget):
         self._binding_modes_to_cycle_through = config.binding_modes_to_cycle_through
         self._current_binding_mode_index = 0
 
-        self._animation = config.animation
-        self._container_shadow = config.container_shadow
-        self._label_shadow = config.label_shadow
-
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self._container_shadow.model_dump())
-
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(self, self._label_content, self._label_alt_content, self._label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self._label_content, self._label_alt_content)
 
         self.glazewm_client = GlazewmClient(
             config.glazewm_server_uri,
@@ -73,8 +52,6 @@ class GlazewmBindingModeWidget(BaseWidget):
         self.hide()
 
     def _toggle_label(self):
-        if self._animation.enabled:
-            AnimationManager.animate(self, self._animation.type, self._animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)

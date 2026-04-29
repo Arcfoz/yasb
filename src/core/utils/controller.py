@@ -7,7 +7,7 @@ from PyQt6.QtCore import QMetaObject, QProcess, Qt
 from PyQt6.QtWidgets import QApplication
 
 from core.application import YASBApplication
-from core.event_service import EventService
+from core.events.service import EventService
 from core.utils.cli_server import CliPipeHandler
 
 _reload_lock = threading.Lock()
@@ -35,7 +35,7 @@ def reload_application(msg: str = "Reloading Application..."):
 
         QProcess.startDetached(sys.executable, args)
     except Exception as e:
-        logging.error(f"Error during reload: {e}")
+        logging.error("Error during reload: %s", e)
         os._exit(0)
 
 

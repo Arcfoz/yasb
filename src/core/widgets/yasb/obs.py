@@ -1,14 +1,13 @@
 import time
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel
+from PyQt6.QtWidgets import QGraphicsOpacityEffect, QLabel
 
 from core.utils.tooltip import set_tooltip
 from core.utils.utilities import refresh_widget_style
-from core.utils.widgets.obs.obs_client import ObsWebSocketClient, ObsWorker
 from core.validation.widgets.yasb.obs import ObsConfig
 from core.widgets.base import BaseWidget
+from core.widgets.services.obs.obs_client import ObsWebSocketClient, ObsWorker
 
 
 class ObsWidget(BaseWidget):
@@ -59,20 +58,13 @@ class ObsWidget(BaseWidget):
         self._init_worker()
 
     def _init_ui(self):
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
+        self._init_container()
         self._widget_container_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        self.widget_layout.addWidget(self._widget_container)
 
         # Record button
         self._record_btn = QLabel(self._icons["stopped"])
         self._record_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._record_btn.setProperty("class", "icon record stopped")
-        self._record_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._record_btn.mousePressEvent = lambda e: (
             self.toggle_record() if e.button() == Qt.MouseButton.LeftButton else None
         )
@@ -87,7 +79,6 @@ class ObsWidget(BaseWidget):
         self._virtual_cam_btn = QLabel(self._icons["virtual_cam_off"])
         self._virtual_cam_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._virtual_cam_btn.setProperty("class", "icon virtual-cam off")
-        self._virtual_cam_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._virtual_cam_btn.mousePressEvent = lambda e: (
             self.toggle_virtual_cam() if e.button() == Qt.MouseButton.LeftButton else None
         )
@@ -101,7 +92,6 @@ class ObsWidget(BaseWidget):
         self._studio_mode_btn = QLabel(self._icons["studio_mode_off"])
         self._studio_mode_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._studio_mode_btn.setProperty("class", "icon studio-mode off")
-        self._studio_mode_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._studio_mode_btn.mousePressEvent = lambda e: (
             self.toggle_studio_mode() if e.button() == Qt.MouseButton.LeftButton else None
         )
@@ -115,7 +105,6 @@ class ObsWidget(BaseWidget):
         self._stream_btn = QLabel(self._icons["streaming_stopped"])
         self._stream_btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._stream_btn.setProperty("class", "icon stream off")
-        self._stream_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._stream_btn.mousePressEvent = lambda e: (
             self.toggle_stream() if e.button() == Qt.MouseButton.LeftButton else None
         )

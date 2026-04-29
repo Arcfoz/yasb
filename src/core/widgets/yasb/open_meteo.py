@@ -20,11 +20,12 @@ from PyQt6.QtWidgets import (
 )
 
 from core.utils.tooltip import set_tooltip
-from core.utils.utilities import PopupWidget, add_shadow, refresh_widget_style
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.open_meteo.api import GeocodingFetcher, OpenMeteoDataFetcher
-from core.utils.widgets.open_meteo.icons import get_weather_icon
-from core.utils.widgets.open_meteo.location import (
+from core.utils.utilities import PopupWidget, refresh_widget_style
+from core.validation.widgets.yasb.open_meteo import OpenMeteoWidgetConfig
+from core.widgets.base import BaseWidget
+from core.widgets.services.open_meteo.api import GeocodingFetcher, OpenMeteoDataFetcher
+from core.widgets.services.open_meteo.icons import get_weather_icon
+from core.widgets.services.open_meteo.location import (
     cleanup_stale_entries,
     get_widget_id,
     load_location,
@@ -32,23 +33,21 @@ from core.utils.widgets.open_meteo.location import (
     save_location,
     save_weather_cache,
 )
-from core.utils.widgets.open_meteo.widgets import (
+from core.widgets.services.open_meteo.widgets import (
     ClickableWidget,
     HourlyData,
     HourlyDataLineWidget,
     HourlyTemperatureScrollArea,
     get_weather_icon_pixmap,
 )
-from core.validation.widgets.yasb.open_meteo import OpenMeteoWidgetConfig
-from core.widgets.base import BaseWidget
 
 
 class OpenMeteoWidget(BaseWidget):
     validation_schema = OpenMeteoWidgetConfig
 
     # Shared state: one fetcher and instance list per widget_id (widget name)
-    _shared_fetchers: dict[str, "OpenMeteoDataFetcher"] = {}
-    _shared_instances: dict[str, list["OpenMeteoWidget"]] = {}
+    _shared_fetchers: dict[str, OpenMeteoDataFetcher] = {}
+    _shared_instances: dict[str, list[OpenMeteoWidget]] = {}
     _pending_init_count: int = 0
 
     def __init__(self, config: OpenMeteoWidgetConfig):
@@ -79,16 +78,7 @@ class OpenMeteoWidget(BaseWidget):
         self._retry_timer.timeout.connect(self._retry_fetch)
 
         # Construct container
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, config.container_shadow.model_dump())
-
-        self.widget_layout.addWidget(self._widget_container)
+        self._init_container()
         self._create_dynamically_label(self._label_content, self._label_alt_content)
 
         self.register_callback("toggle_label", self._toggle_label)
@@ -127,7 +117,7 @@ class OpenMeteoWidget(BaseWidget):
                     self.process_weather_data(cached_data)
                     self._update_label(True)
                 except Exception as e:
-                    logging.warning(f"Failed to load cached weather data: {e}")
+                    logging.warning("Failed to load cached weather data: %s", e)
                     is_cache_valid = False
 
             # Only start a fetcher if one isn't already running for this widget_id
@@ -135,7 +125,7 @@ class OpenMeteoWidget(BaseWidget):
                 self._start_weather_fetcher(delayed=is_cache_valid)
         else:
             self._set_label_text("Setup location")
-            logging.info(f"No saved location for {self._widget_id}. Awaiting user setup.")
+            logging.info("No saved location for %s. Awaiting user setup.", self._widget_id)
 
         # Clean up stale entries once all widgets have initialized
         OpenMeteoWidget._pending_init_count -= 1
@@ -171,14 +161,14 @@ class OpenMeteoWidget(BaseWidget):
             if data and self._widget_id:
                 save_weather_cache(self._widget_id, data)
         except Exception as e:
-            logging.error(f"Failed to save weather cache: {e}")
+            logging.error("Failed to save weather cache: %s", e)
 
         for instance in OpenMeteoWidget._shared_instances.get(self._widget_id, []):
             try:
                 instance.process_weather_data(data)
                 instance._update_label(True)
             except Exception as e:
-                logging.error(f"Failed to update weather instance: {e}")
+                logging.error("Failed to update weather instance: %s", e)
 
         # Retry on empty (failed) responses
         if not data and not self._retry_timer.isActive():
@@ -190,8 +180,6 @@ class OpenMeteoWidget(BaseWidget):
             fetcher.make_request()
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
@@ -200,8 +188,6 @@ class OpenMeteoWidget(BaseWidget):
         self._update_label(update_class=False)
 
     def _toggle_card(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._popup_card()
 
     def _popup_card(self):
@@ -396,7 +382,6 @@ class OpenMeteoWidget(BaseWidget):
                 btn = QLabel(icon)
                 btn.setProperty("class", f"hourly-data-button{' active' if data_type == default_data_type else ''}")
                 btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 set_tooltip(btn, data_type.capitalize(), delay=400, position="top")
                 buttons_layout.addWidget(btn)
                 buttons.append(btn)
@@ -422,7 +407,6 @@ class OpenMeteoWidget(BaseWidget):
         today_label0 = QLabel(f"{self._weather_data['{location}']} {self._weather_data['{temp}']}")
         today_label0.setProperty("class", "label location")
         today_label0.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        today_label0.setCursor(Qt.CursorShape.PointingHandCursor)
         set_tooltip(today_label0, "Click to change location", delay=400, position="bottom")
 
         today_label0.mousePressEvent = self.reset_location
@@ -648,8 +632,6 @@ class OpenMeteoWidget(BaseWidget):
                     label.setProperty("class", "label alt" if is_alt else "label")
                     label.setText("weather update...")
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                label.setCursor(Qt.CursorShape.PointingHandCursor)
-                add_shadow(label, self.config.label_shadow.model_dump())
                 self._widget_container_layout.addWidget(label)
                 widgets.append(label)
                 if is_alt:
@@ -724,7 +706,7 @@ class OpenMeteoWidget(BaseWidget):
                     active_widgets[widget_index].show()
                 widget_index += 1
         except Exception as e:
-            logging.exception(f"Failed to update label: {e}")
+            logging.exception("Failed to update label: %s", e)
 
     @pyqtSlot(dict)
     def process_weather_data(self, weather_data: dict[str, Any]):

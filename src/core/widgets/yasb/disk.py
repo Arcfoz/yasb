@@ -3,16 +3,13 @@ import re
 
 import win32api
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from core.utils.utilities import (
     PopupWidget,
-    add_shadow,
     build_progress_widget,
-    build_widget_label,
     refresh_widget_style,
 )
-from core.utils.widgets.animation_manager import AnimationManager
 from core.validation.widgets.yasb.disk import DiskConfig
 from core.widgets.base import BaseWidget
 
@@ -40,18 +37,8 @@ class DiskWidget(BaseWidget):
         self.progress_widget = None
         self.progress_widget = build_progress_widget(self, self.config.progress_bar.model_dump())
 
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        # Initialize container
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-        # Add the container to the main widget layout
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(self, self.config.label, self.config.label_alt, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self.config.label, self.config.label_alt)
 
         self.register_callback("toggle_label", self._toggle_label)
         self.register_callback("toggle_group", self._toggle_group)
@@ -63,8 +50,6 @@ class DiskWidget(BaseWidget):
         self.start_timer()
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
@@ -73,8 +58,6 @@ class DiskWidget(BaseWidget):
         self._update_label()
 
     def _toggle_group(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self.show_group_label()
 
     def _update_label(self):
@@ -150,7 +133,6 @@ class DiskWidget(BaseWidget):
 
             clicable_row = ClickableDiskWidget(label)
             clicable_row.clicked.connect(lambda lbl=label: self.open_explorer(lbl))
-            clicable_row.setCursor(Qt.CursorShape.PointingHandCursor)
 
             v_layout = QVBoxLayout(clicable_row)
             h_layout = QHBoxLayout()

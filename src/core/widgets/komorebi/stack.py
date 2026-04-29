@@ -5,23 +5,22 @@ from typing import Literal
 
 import win32gui
 from PIL import Image
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QCursor, QImage, QMouseEvent, QPixmap
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QImage, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
 
-from core.event_enums import KomorebiEvent
-from core.event_service import EventService
-from core.utils.utilities import add_shadow, refresh_widget_style
-from core.utils.widgets.komorebi.client import KomorebiClient
+from core.events.komorebi import KomorebiEvent
+from core.events.service import EventService
+from core.utils.utilities import refresh_widget_style
 from core.utils.win32.app_icons import get_window_icon
-from core.utils.win32.utilities import get_monitor_hwnd
+from core.utils.win32.utils import get_monitor_hwnd
 from core.utils.win32.window_actions import close_application
 from core.validation.widgets.komorebi.stack import StackConfig
 from core.widgets.base import BaseWidget
-from settings import DEBUG
+from core.widgets.services.komorebi.client import KomorebiClient
 
 try:
-    from core.utils.widgets.komorebi.event_listener import KomorebiEventListener
+    from core.widgets.services.komorebi.event_listener import KomorebiEventListener
 except ImportError:
     KomorebiEventListener = None
     logging.warning("Failed to load Komorebi Event Listener")
@@ -33,10 +32,9 @@ WINDOW_STATUS_ACTIVE: WindowStatus = "ACTIVE"
 
 class WindowButton(QFrame):
     def __init__(
-        self, window_index: int, parent_widget: "StackWidget", label: str | None = None, active_label: str | None = None
+        self, window_index: int, parent_widget: StackWidget, label: str | None = None, active_label: str | None = None
     ):
         super().__init__()
-        self._animation_initialized = False
         self.komorebic = KomorebiClient()
         self.window_index = window_index
         self.parent_widget = parent_widget
@@ -44,18 +42,15 @@ class WindowButton(QFrame):
         self.setProperty("class", "window")
         self.default_label = label
         self.active_label = active_label if active_label else self.default_label
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
 
         self.button_layout = QHBoxLayout(self)
         self.button_layout.setContentsMargins(0, 0, 0, 0)
         self.button_layout.setSpacing(0)
-        add_shadow(self, self.parent_widget.config.btn_shadow.model_dump())
 
         self.icon = None
         self.icon_label = QLabel()
         self.icon_label.setProperty("class", "icon")
         self.button_layout.addWidget(self.icon_label)
-        add_shadow(self.icon_label, self.parent_widget.config.label_shadow.model_dump())
         if self.parent_widget.config.show_icons == "never" or (
             self.parent_widget.config.show_icons == "focused" and self.status == WINDOW_STATUS_INACTIVE
         ):
@@ -64,7 +59,6 @@ class WindowButton(QFrame):
         self.text_label = QLabel(self.default_label)
         self.text_label.setProperty("class", "label")
         self.button_layout.addWidget(self.text_label)
-        add_shadow(self.text_label, self.parent_widget.config.label_shadow.model_dump())
 
         self.hide()
         self.update_icon()
@@ -108,46 +102,12 @@ class WindowButton(QFrame):
     def focus_stack_window(self):
         try:
             self.komorebic.focus_stack_window(self.window_index)
-            if self.parent_widget.config.animation:
-                pass
-                # self.animate_buttons()
         except Exception:
-            logging.exception(f"Failed to focus stack window at index {self.window_index}")
+            logging.exception("Failed to focus stack window at index %s", self.window_index)
 
     def close_stack_window(self):
         hwnd = self.parent_widget._komorebi_windows[self.window_index]["hwnd"]
         close_application(hwnd)
-
-    def animate_buttons(self, duration=200, step=30):
-        # Store the initial width if not already stored (to enable reverse animations)
-        if not hasattr(self, "_initial_width"):
-            self._initial_width = self.width()
-
-        self._current_width = self.width()
-        target_width = self.sizeHint().width()
-
-        step_duration = int(duration / step)
-        width_increment = (target_width - self._current_width) / step
-        self._current_step = 0
-
-        def update_width():
-            if self._current_step < step:
-                self._current_width += width_increment
-                self.setFixedWidth(int(self._current_width))
-                self._current_step += 1
-            else:
-                # Animation done: stop timer and set to target exactly
-                self._animation_timer.stop()
-                self.setFixedWidth(target_width)
-
-        # Stop any existing timer before starting a new one to prevent conflicts
-        if hasattr(self, "_animation_timer") and self._animation_timer.isActive():
-            self._animation_timer.stop()
-
-        # Parent the timer to the widget to avoid potential memory leaks
-        self._animation_timer = QTimer(self)
-        self._animation_timer.timeout.connect(update_width)
-        self._animation_timer.start(step_duration)
 
 
 class StackWidget(BaseWidget):
@@ -192,12 +152,10 @@ class StackWidget(BaseWidget):
         # Status text shown when komorebi state can't be retrieved
         self._offline_text = QLabel()
         self._offline_text.setText(self.config.label_offline)
-        add_shadow(self._offline_text, self.config.label_shadow.model_dump())
         self._offline_text.setProperty("class", "offline-status")
         # Status text shown when there is no active window
         self._no_window_text = QLabel()
         self._no_window_text.setText(self.config.label_no_window)
-        add_shadow(self._no_window_text, self.config.label_shadow.model_dump())
         self._no_window_text.setProperty("class", "no-window")
         # Construct container which holds windows buttons
         self._widget_container_layout = QHBoxLayout()
@@ -208,7 +166,6 @@ class StackWidget(BaseWidget):
         self._widget_container = QFrame()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
         self._widget_container.hide()
         self.widget_layout.addWidget(self._offline_text)
         self.widget_layout.addWidget(self._no_window_text)
@@ -261,7 +218,7 @@ class StackWidget(BaseWidget):
                     if callable(transform):
                         result = transform()
             except re.error as e:
-                logging.warning(f"Invalid regex pattern '{pattern}': {e}")
+                logging.warning("Invalid regex pattern '%s': %s", pattern, e)
                 continue
 
         return result
@@ -421,10 +378,7 @@ class StackWidget(BaseWidget):
         window_btn.show()
         if window_btn.status != window_status:
             window_btn.update_and_redraw(window_status)
-            if self.config.animation and window_btn._animation_initialized:
-                window_btn.animate_buttons()
         window_btn.update_visible_buttons()
-        window_btn._animation_initialized = True
 
     def _update_button_label(self, window_btn: WindowButton) -> None:
         window_index = window_btn.window_index
@@ -433,9 +387,6 @@ class StackWidget(BaseWidget):
             window_btn.default_label = default_label
             window_btn.active_label = active_label if active_label else default_label
             window_btn.update_and_redraw(window_btn.status)
-            if self.config.animation and window_btn._animation_initialized:
-                window_btn.animate_buttons()
-        window_btn._animation_initialized = True
 
     def _add_or_update_buttons(self) -> None:
         buttons_added = False
@@ -531,7 +482,7 @@ class StackWidget(BaseWidget):
         try:
             self._komorebic.focus_stack_window(next_idx)
         except Exception:
-            logging.exception(f"Failed to switch to stack window at index {next_idx}")
+            logging.exception("Failed to switch to stack window at index %s", next_idx)
 
     def get_app_icon(self, window_index: int, ignore_cache: bool) -> QPixmap | None:
         try:
@@ -561,6 +512,7 @@ class StackWidget(BaseWidget):
                     return pixmap
 
         except Exception:
-            if DEBUG:
-                logging.exception(f"Failed to get icons for window with HWND {hwnd if hwnd is not None else 'unknown'}")
+            logging.debug(
+                "Failed to get icons for window with HWND %s", hwnd if hwnd is not None else "unknown", exc_info=True
+            )
             return None

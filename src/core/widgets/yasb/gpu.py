@@ -2,27 +2,24 @@ import re
 from collections import deque
 
 from humanize import naturalsize
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
+from core.utils.stat_popup import GraphWidget, build_stat_popup
 from core.utils.utilities import (
     PopupWidget,
-    add_shadow,
     build_progress_widget,
-    build_widget_label,
     refresh_widget_style,
 )
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.gpu.gpu_api import GpuData, GpuWorker
-from core.utils.widgets.stat_popup import GraphWidget, build_stat_popup
 from core.validation.widgets.yasb.gpu import GpuConfig
 from core.widgets.base import BaseWidget
+from core.widgets.services.gpu.gpu_api import GpuData, GpuWorker
 
 
 class GpuWidget(BaseWidget):
     validation_schema = GpuConfig
 
     # Class-level shared data and worker
-    _instances: list["GpuWidget"] = []
+    _instances: list[GpuWidget] = []
     _worker: GpuWorker | None = None
 
     def __init__(self, config: GpuConfig):
@@ -38,18 +35,8 @@ class GpuWidget(BaseWidget):
         self.progress_widget = None
         self.progress_widget = build_progress_widget(self, self.config.progress_bar.model_dump())
 
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        # Initialize container
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-        # Add the container to the main widget layout
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(self, self.config.label, self.config.label_alt, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self.config.label, self.config.label_alt)
 
         self.register_callback("toggle_label", self._toggle_label)
         self.register_callback("toggle_menu", self._show_popup)
@@ -295,8 +282,6 @@ class GpuWidget(BaseWidget):
         popup.show()
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)

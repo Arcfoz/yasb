@@ -3,11 +3,9 @@ from typing import Literal
 from pydantic import Field
 
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CallbacksConfig,
     CustomBaseModel,
     KeybindingConfig,
-    ShadowConfig,
 )
 
 
@@ -42,11 +40,21 @@ class CalculatorProviderConfig(CustomBaseModel):
     priority: int = 0
 
 
+class WebSearchEngineConfig(CustomBaseModel):
+    engine: str
+    name: str
+    url: str
+    icon: str = ""
+    description: str = "Search the web"
+
+
 class WebSearchProviderConfig(CustomBaseModel):
     enabled: bool = False
     prefix: str = "?"
     priority: int = 0
     engine: str = "google"
+    custom_engines: list[WebSearchEngineConfig] = []
+    remove_engines: list[str] = []
 
 
 class SystemCommandsProviderConfig(CustomBaseModel):
@@ -74,6 +82,16 @@ class FileSearchProviderConfig(CustomBaseModel):
     backend: Literal["auto", "everything", "index", "disk"] = "auto"
     show_path: bool = True
     show_preview: bool = False
+
+
+class BinanceProviderConfig(CustomBaseModel):
+    enabled: bool = False
+    prefix: str = "crypto"
+    priority: int = 0
+    pairs: list[str] = ["BTC/USDT"]
+    round: int = 2
+    open_url: bool = False
+    domain: str = "api-gcp.binance.com"
 
 
 class CurrencyProviderConfig(CustomBaseModel):
@@ -202,6 +220,7 @@ class QuickLaunchProvidersConfig(CustomBaseModel):
     calculator: CalculatorProviderConfig = CalculatorProviderConfig()
     clipboard_history: ClipboardHistoryProviderConfig = ClipboardHistoryProviderConfig()
     color: ColorProviderConfig = ColorProviderConfig()
+    binance: BinanceProviderConfig = BinanceProviderConfig()
     currency: CurrencyProviderConfig = CurrencyProviderConfig()
     dev_tools: DevToolsProviderConfig = DevToolsProviderConfig()
     emoji: EmojiProviderConfig = EmojiProviderConfig()
@@ -227,6 +246,7 @@ class QuickLaunchProvidersConfig(CustomBaseModel):
 class QuickLaunchConfig(CustomBaseModel):
     label: str = "\uf002"
     search_placeholder: str = "Search applications..."
+    remember_last_query: bool = False
     max_results: int = Field(default=50, ge=1, le=500)
     show_icons: bool = True
     icon_size: int = 32
@@ -235,8 +255,5 @@ class QuickLaunchConfig(CustomBaseModel):
     compact_text: bool = False
     providers: QuickLaunchProvidersConfig = QuickLaunchProvidersConfig()
     popup: QuickLaunchPopupConfig = QuickLaunchPopupConfig()
-    animation: AnimationConfig = AnimationConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
     keybindings: list[KeybindingConfig] = []
     callbacks: QuickLaunchCallbacksConfig = QuickLaunchCallbacksConfig()

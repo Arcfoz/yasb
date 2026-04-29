@@ -1,7 +1,6 @@
 import logging
 
 from PyQt6.QtCore import (
-    QEasingCurve,
     Qt,
     QTimer,
 )
@@ -10,17 +9,20 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
+    QLabel,
+    QLineEdit,
     QMenu,
     QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
 )
 
-from core.utils.utilities import add_shadow, is_windows_10, refresh_widget_style
-from core.utils.widgets.komorebi.animation import KomorebiAnimation
-from core.utils.widgets.windows_desktops.service import WindowsDesktopService
-from core.utils.win32.utilities import apply_qmenu_style
+from core.utils.system import is_windows_10
+from core.utils.utilities import PopupWidget, refresh_widget_style
+from core.utils.win32.utils import apply_qmenu_style
 from core.validation.widgets.yasb.windows_desktops import WindowsDesktopsConfig
 from core.widgets.base import BaseWidget
+from core.widgets.services.windows_desktops.service import WindowsDesktopService
 
 
 class WorkspaceButton(QPushButton):
@@ -39,25 +41,20 @@ class WorkspaceButton(QPushButton):
         self.active_label = active_label if active_label else self.default_label
         self.setText(self.default_label)
         self.parent_widget = parent
-        self.workspace_animation = parent.config.switch_workspace_animation if parent else False
-        self.animation = parent.config.animation if parent else False
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clicked.connect(self._on_clicked)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, self.sizePolicy().verticalPolicy())
 
     def _on_clicked(self):
         if self.parent_widget:
             self.parent_widget._clicked_button = self
             self.parent_widget._run_callback(self.parent_widget.callback_left)
 
-    def contextMenuEvent(self, event):
+    def mousePressEvent(self, event):
         if self.parent_widget:
             self.parent_widget._clicked_button = self
-            self.parent_widget._run_callback(self.parent_widget.callback_right)
+        super().mousePressEvent(event)
 
     def update_text(self, text: str):
-        """Update button text and capture width before change for animation"""
-        if self.animation:
-            self._pre_change_width = self.sizeHint().width()
         self.setText(text)
 
     def update_visible_buttons(self):
@@ -71,31 +68,16 @@ class WorkspaceButton(QPushButton):
             new_class = f"{new_class} button-{index + 1}"
             button.setProperty("class", new_class)
             refresh_widget_style(button)
-        if self.animation:
-            try:
-                prev_idx = getattr(self.parent_widget, "_prev_workspace_index", None)
-                curr_idx = getattr(self.parent_widget, "_curr_workspace_index", None)
-                if self.workspace_index in (prev_idx, curr_idx):
-                    self.animate_buttons()
-            except Exception:
-                self.animate_buttons()
 
     def activate_workspace(self):
         try:
             WindowsDesktopService.switch_desktop(self.workspace_index)
             WindowsDesktopService().notify_desktop_changed(self.workspace_index)
         except Exception:
-            logging.exception(f"Failed to focus desktop at index {self.workspace_index}")
-
-    def animate_buttons(self, duration: int = 120):
-        # Use the centralized animation from Komorebi
-        start_width = self._pre_change_width
-        KomorebiAnimation.animate_width(
-            self, duration=duration, easing=QEasingCurve.Type.OutCubic, start_width=start_width
-        )
+            logging.exception("Failed to focus desktop at index %s", self.workspace_index)
 
     def _show_context_menu(self):
-        menu = QMenu(self)
+        menu = QMenu(self.window())
         # Assign a class for global styling; apply rounded corners via helper
         menu.setProperty("class", "context-menu")
         # Apply Windows rounded corners to the QMenu when it is shown
@@ -105,9 +87,10 @@ class WorkspaceButton(QPushButton):
         act_rename.triggered.connect(self.rename_desktop)
         menu.addAction(act_rename)
 
-        act_delete = QAction("Delete", self)
-        act_delete.triggered.connect(self.delete_desktop)
-        menu.addAction(act_delete)
+        if len(WindowsDesktopService.get_desktops()) > 1:
+            act_delete = QAction("Delete", self)
+            act_delete.triggered.connect(self.delete_desktop)
+            menu.addAction(act_delete)
 
         menu.addSeparator()
 
@@ -129,7 +112,7 @@ class WorkspaceButton(QPushButton):
             )
             menu.addAction(act_move_here)
 
-            move_menu = QMenu("Move Window To", self)
+            move_menu = QMenu("Move Window To", self.window())
             move_menu.setProperty("class", "context-menu")
             apply_qmenu_style(move_menu)
             try:
@@ -173,10 +156,7 @@ class WorkspaceButton(QPushButton):
             menu.addAction(act_set_wall_all)
 
         menu.popup(QCursor.pos())
-        try:
-            menu.activateWindow()
-        except Exception:
-            pass
+        menu.activateWindow()
 
     def set_wallpaper(self):
         image_path, _ = QFileDialog.getOpenFileName(
@@ -186,7 +166,7 @@ class WorkspaceButton(QPushButton):
             try:
                 WindowsDesktopService.set_wallpaper(self.workspace_index, image_path)
             except Exception as e:
-                logging.exception(f"Failed to set wallpaper: {e}")
+                logging.exception("Failed to set wallpaper: %s", e)
 
     def set_wallpaper_all(self):
         image_path, _ = QFileDialog.getOpenFileName(
@@ -196,55 +176,120 @@ class WorkspaceButton(QPushButton):
             try:
                 WindowsDesktopService.set_wallpaper_all(image_path)
             except Exception as e:
-                logging.exception(f"Failed to set wallpaper for all desktops: {e}")
+                logging.exception("Failed to set wallpaper for all desktops: %s", e)
 
     def rename_desktop(self):
-        dialog = QInputDialog(self)
-        dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint)
-        dialog.setWindowTitle("Rename This Desktop")
-        dialog.setProperty("class", "rename-dialog")
-        dialog.setLabelText("Enter name for this desktop")
-
         current_name = WindowsDesktopService.get_desktop_name(self.workspace_index)
         if not current_name:
             current_name = str(self.workspace_index)
-        dialog.setTextValue(current_name)
-        dialog.move(QCursor.pos())
-        ok = dialog.exec()
-        new_name = dialog.textValue().strip()
-        if ok and new_name:
-            try:
-                WindowsDesktopService.rename_desktop(self.workspace_index, new_name)
-                WindowsDesktopService().notify_desktops_updated(update_buttons=True)
-            except Exception as e:
-                logging.exception(f"Failed to rename desktop: {e}")
-        else:
-            logging.info("No name entered. Rename cancelled.")
+
+        workspace_index = self.workspace_index
+
+        popup = PopupWidget(
+            self.parent_widget,
+            blur=True,
+            round_corners=True,
+            round_corners_type="normal",
+            border_color="System",
+            dark_mode=True,
+        )
+        popup.setProperty("class", "windows-desktops-popup rename")
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        popup.setLayout(layout)
+
+        container_frame = QFrame()
+        container_frame.setProperty("class", "windows-desktops-popup-container")
+        container_layout = QVBoxLayout(container_frame)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+
+        title_label = QLabel("Rename Desktop")
+        title_label.setProperty("class", "popup-title")
+        container_layout.addWidget(title_label)
+
+        desc_label = QLabel("Enter a new name for this desktop.")
+        desc_label.setProperty("class", "popup-description")
+        container_layout.addWidget(desc_label)
+
+        name_edit = QLineEdit()
+        name_edit.setProperty("class", "rename-input")
+        name_edit.setText(current_name)
+        name_edit.setPlaceholderText("Desktop name")
+        name_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        name_edit.selectAll()
+        name_edit.setFocus()
+        container_layout.addWidget(name_edit)
+
+        rename_btn = QPushButton("Rename")
+        rename_btn.setProperty("class", "button save")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setProperty("class", "button cancel")
+
+        def do_rename():
+            new_name = name_edit.text().strip()
+            if new_name:
+                try:
+                    WindowsDesktopService.rename_desktop(workspace_index, new_name)
+                    WindowsDesktopService().notify_desktops_updated(update_buttons=True)
+                except Exception as e:
+                    logging.exception("Failed to rename desktop: %s", e)
+            popup.close()
+
+        def update_rename_enabled():
+            rename_btn.setEnabled(bool(name_edit.text().strip()))
+
+        update_rename_enabled()
+        name_edit.textChanged.connect(lambda _text: update_rename_enabled())
+        name_edit.returnPressed.connect(do_rename)
+        rename_btn.clicked.connect(do_rename)
+        cancel_btn.clicked.connect(lambda: popup.close())
+
+        footer_frame = QFrame()
+        footer_frame.setProperty("class", "windows-desktops-popup-footer")
+        button_layout = QHBoxLayout(footer_frame)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(0)
+        button_layout.addWidget(rename_btn)
+        button_layout.addWidget(cancel_btn)
+
+        layout.addWidget(container_frame)
+        layout.addWidget(footer_frame)
+
+        popup.adjustSize()
+        popup.setPosition(
+            alignment="center",
+            direction="down",
+            offset_left=0,
+            offset_top=6,
+        )
+        popup.show()
 
     def move_active_window_to(self, desktop_number: int, hwnd: int):
         try:
             WindowsDesktopService.move_window(hwnd, desktop_number)
         except Exception as e:
-            logging.exception(f"Failed to move active window to desktop {desktop_number}: {e}")
+            logging.exception("Failed to move active window to desktop %s: %s", desktop_number, e)
 
     def toggle_pin_window(self, hwnd: int):
         try:
             WindowsDesktopService.toggle_pin_window(hwnd)
         except Exception as e:
-            logging.exception(f"Failed to toggle pin window: {e}")
+            logging.exception("Failed to toggle pin window: %s", e)
 
     def toggle_pin_app(self, hwnd: int):
         try:
             WindowsDesktopService.toggle_pin_app(hwnd)
         except Exception as e:
-            logging.exception(f"Failed to toggle pin app: {e}")
+            logging.exception("Failed to toggle pin app: %s", e)
 
     def delete_desktop(self):
         try:
             WindowsDesktopService.remove_desktop(self.workspace_index)
             WindowsDesktopService().notify_desktops_updated(update_buttons=False)
         except Exception as e:
-            logging.exception(f"Failed to delete desktop: {e}")
+            logging.exception("Failed to delete desktop: %s", e)
 
     def create_new_desktop(self):
         try:
@@ -290,14 +335,7 @@ class WorkspaceWidget(BaseWidget):
         self.callback_middle = config.callbacks.on_middle
 
         # Construct container which holds workspace buttons
-        self._workspace_container_layout = QHBoxLayout()
-        self._workspace_container_layout.setSpacing(0)
-        self._workspace_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._workspace_container = QFrame()
-        self._workspace_container.setLayout(self._workspace_container_layout)
-        self._workspace_container.setProperty("class", "widget-container")
-        add_shadow(self._workspace_container, self.config.container_shadow.model_dump())
-        self.widget_layout.addWidget(self._workspace_container)
+        self._init_container()
 
         self.register_callback("update_desktops", self._force_update)
 
@@ -334,7 +372,7 @@ class WorkspaceWidget(BaseWidget):
                 if app_view:
                     WindowsDesktopService.move_window(app_view.hwnd, self._clicked_button.workspace_index)
             except Exception as e:
-                logging.exception(f"Failed to move window to desktop {self._clicked_button.workspace_index}: {e}")
+                logging.exception("Failed to move window to desktop %s: %s", self._clicked_button.workspace_index, e)
 
     def _cb_delete_workspace(self):
         if self._clicked_button:
@@ -364,12 +402,6 @@ class WorkspaceWidget(BaseWidget):
         if curr_btn is not None:
             self._update_button(curr_btn, schedule_update=False)
 
-        # Start both animations so they run in parallel
-        if prev_btn is not None and getattr(prev_btn, "animation", False):
-            prev_btn.animate_buttons()
-        if curr_btn is not None and getattr(curr_btn, "animation", False):
-            curr_btn.animate_buttons()
-
     def _on_update_desktops(self, event_data=None, options=None):
         self._virtual_desktops_check = list(range(1, len(self._svc.get_desktops()) + 1))
         self._curr_workspace_index_check = self._svc.get_current_desktop().number
@@ -382,25 +414,20 @@ class WorkspaceWidget(BaseWidget):
             self._virtual_desktops = self._virtual_desktops_check
             self._curr_workspace_index = self._curr_workspace_index_check
             self._add_or_remove_buttons()
-            self.refresh_workspace_button_labels(animate=update_buttons)
+            self.refresh_workspace_button_labels()
 
-    def refresh_workspace_button_labels(self, animate: bool = False):
+    def refresh_workspace_button_labels(self):
         for button in self._workspace_buttons:
             ws_label, ws_active_label = self._get_workspace_label(button.workspace_index)
             button.default_label = ws_label
             button.active_label = ws_active_label
             button.workspace_name = self._svc.get_desktop_name(button.workspace_index)
             self._update_button(button)
-            if animate and getattr(button, "animation", False):
-                try:
-                    button.animate_buttons()
-                except Exception:
-                    pass
 
     def _clear_container_layout(self):
-        for i in reversed(range(self._workspace_container_layout.count())):
-            old_workspace_widget = self._workspace_container_layout.itemAt(i).widget()
-            self._workspace_container_layout.removeWidget(old_workspace_widget)
+        for i in reversed(range(self._widget_container_layout.count())):
+            old_workspace_widget = self._widget_container_layout.itemAt(i).widget()
+            self._widget_container_layout.removeWidget(old_workspace_widget)
             old_workspace_widget.setParent(None)
 
     def _update_button(self, workspace_btn: WorkspaceButton, schedule_update: bool = True) -> None:
@@ -446,16 +473,9 @@ class WorkspaceWidget(BaseWidget):
             self._workspace_buttons.sort(key=lambda btn: btn.workspace_index)
             self._clear_container_layout()
             for workspace_btn in self._workspace_buttons:
-                self._workspace_container_layout.addWidget(workspace_btn)
-                add_shadow(workspace_btn, self.config.btn_shadow.model_dump())
+                self._widget_container_layout.addWidget(workspace_btn)
             try:
                 QTimer.singleShot(0, lambda: [btn.update_visible_buttons() for btn in self._workspace_buttons])
-                for btn in self._workspace_buttons:
-                    if getattr(btn, "animation", False):
-                        try:
-                            QTimer.singleShot(0, btn.animate_buttons)
-                        except Exception:
-                            pass
             except Exception:
                 pass
 

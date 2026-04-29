@@ -1,12 +1,9 @@
 from typing import Literal
 
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CallbacksConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -47,9 +44,5 @@ class TrafficWidgetConfig(CustomBaseModel):
     hide_decimal: bool = False
     speed_threshold: SpeedThresholdConfig = SpeedThresholdConfig()
     menu: MenuConfig = MenuConfig()
-    animation: AnimationConfig = AnimationConfig()
-    container_padding: PaddingConfig = PaddingConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
     keybindings: list[KeybindingConfig] = []
     callbacks: TrafficCallbacksConfig = TrafficCallbacksConfig()

@@ -1,14 +1,10 @@
 import ctypes
 import datetime
 import os
-import winreg
 
-import win32api
-import win32con
-import win32security
 from PyQt6 import QtCore
 from PyQt6.QtCore import QPropertyAnimation, Qt
-from PyQt6.QtGui import QCursor, QPainter, QPainterPath, QPixmap
+from PyQt6.QtGui import QPainter, QPainterPath, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -20,83 +16,18 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.utils.utilities import PopupWidget, add_shadow, refresh_widget_style
-from core.utils.widgets.power_menu.power_commands import PowerOperations
-from core.utils.win32.win32_accent import Blur
+from core.utils.utilities import PopupWidget, refresh_widget_style
+from core.utils.win32.backdrop import enable_blur
 from core.utils.win32.window_actions import force_foreground_focus
 from core.validation.widgets.yasb.power_menu import PowerMenuConfig
 from core.widgets.base import BaseWidget
-
-
-def _get_windows_username():
-    """Get the Windows display name for the current user."""
-    try:
-        return win32api.GetUserNameEx(3)  # NameDisplay
-    except Exception:
-        return win32api.GetUserName()
-
-
-def _get_account_type():
-    """Get account type: Administrator or Standard User."""
-    try:
-        token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
-        admin_sid = win32security.ConvertStringSidToSid("S-1-5-32-544")
-        groups = win32security.GetTokenInformation(token, win32security.TokenGroups)
-        for sid, _ in groups:
-            if sid == admin_sid:
-                return "Administrator"
-        return "Standard User"
-    except Exception:
-        return "Standard User"
-
-
-def _get_user_email():
-    """Get the email address associated with the current Windows user account."""
-    try:
-        # Try UserPrincipalName (works for domain/Azure AD accounts)
-        return win32api.GetUserNameEx(8)  # NameUserPrincipal
-    except Exception:
-        pass
-    try:
-        # Try Microsoft account email from registry
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\IdentityCRL\UserExtendedProperties",
-        ) as key:
-            if winreg.QueryInfoKey(key)[0] > 0:
-                return winreg.EnumKey(key, 0)
-    except Exception:
-        pass
-    return None
-
-
-def _get_user_avatar_path():
-    """Get the current user's account picture from registry using the process token SID."""
-    try:
-        token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
-        sid = win32security.ConvertSidToStringSid(win32security.GetTokenInformation(token, win32security.TokenUser)[0])
-        with winreg.OpenKey(
-            winreg.HKEY_LOCAL_MACHINE,
-            f"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AccountPicture\\Users\\{sid}",
-        ) as key:
-            best_path, best_res = None, 0
-            for i in range(winreg.QueryInfoKey(key)[1]):
-                name, value, _ = winreg.EnumValue(key, i)
-                if name.startswith("Image") and isinstance(value, str) and os.path.isfile(value):
-                    try:
-                        res = int(name.removeprefix("Image"))
-                    except ValueError:
-                        continue
-                    if res > best_res:
-                        best_res, best_path = res, value
-            return best_path
-    except Exception:
-        pass
-    # Fallback to default Windows user avatar
-    fallback = os.path.join(
-        os.environ.get("ProgramData", r"C:\ProgramData"), "Microsoft", "User Account Pictures", "user-192.png"
-    )
-    return fallback if os.path.isfile(fallback) else None
+from core.widgets.services.power_menu.power_commands import PowerOperations
+from core.widgets.services.power_menu.user_info import (
+    get_account_type,
+    get_user_avatar_path,
+    get_user_email,
+    get_windows_username,
+)
 
 
 class AnimatedWidget(QFrame):
@@ -178,28 +109,15 @@ class PowerMenuWidget(BaseWidget):
         super().__init__(0, class_name="power-menu-widget")
         self.config = config
 
-        self._button = QLabel(self.config.label)
-        self._button.setProperty("class", "label power-button")
-        self._button.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._button.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        add_shadow(self._button, self.config.label_shadow.model_dump())
-
-        # Construct container
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-
-        # Add the container to the main widget layout
-        self.widget_layout.addWidget(self._widget_container)
-        self._widget_container_layout.addWidget(self._button)
+        # Construct container and label
+        self._init_container()
+        self.build_widget_label(self.config.label, None)
 
         self.register_callback("toggle_power_menu", self._show_main_window)
-        self.callback_left = "toggle_power_menu"
+
+        self.callback_left = self.config.callbacks.on_left
+        self.callback_right = self.config.callbacks.on_right
+        self.callback_middle = self.config.callbacks.on_middle
 
         self.main_window = None
         self._popup = None
@@ -221,7 +139,6 @@ class PowerMenuWidget(BaseWidget):
             self._cleanup_main_window()
             self.main_window = MainWindow(
                 self,
-                self._button,
                 self.config.uptime,
                 self.config.blur,
                 self.config.blur_background,
@@ -263,7 +180,7 @@ class PowerMenuWidget(BaseWidget):
             avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             avatar_size = self.config.profile_image_size
             avatar_label.setFixedSize(avatar_size, avatar_size)
-            avatar_path = _get_user_avatar_path()
+            avatar_path = get_user_avatar_path()
             if avatar_path:
                 pixmap = QPixmap(avatar_path)
                 if not pixmap.isNull():
@@ -288,17 +205,17 @@ class PowerMenuWidget(BaseWidget):
                     avatar_label.setPixmap(rounded)
             profile_layout.addWidget(avatar_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-            username_label = QLabel(_get_windows_username())
+            username_label = QLabel(get_windows_username())
             username_label.setProperty("class", "profile-username")
             username_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             profile_layout.addWidget(username_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-            account_type_label = QLabel(_get_account_type())
+            account_type_label = QLabel(get_account_type())
             account_type_label.setProperty("class", "profile-account-type")
             account_type_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             profile_layout.addWidget(account_type_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-            user_email = _get_user_email()
+            user_email = get_user_email()
             if user_email:
                 email_label = QLabel(user_email)
                 email_label.setProperty("class", "profile-email")
@@ -307,7 +224,6 @@ class PowerMenuWidget(BaseWidget):
 
             manage_btn = QPushButton("Manage accounts")
             manage_btn.setProperty("class", "manage-accounts")
-            manage_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             manage_btn.clicked.connect(lambda: (self._popup.hide(), os.startfile("ms-settings:accounts")))
             profile_layout.addWidget(manage_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -331,7 +247,6 @@ class PowerMenuWidget(BaseWidget):
 
             btn_frame = QFrame()
             btn_frame.setProperty("class", f"button {button_name.replace('_', '-')}")
-            btn_frame.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             btn_layout = QHBoxLayout(btn_frame)
             btn_layout.setSpacing(0)
             btn_layout.setContentsMargins(0, 0, 0, 0)
@@ -392,7 +307,6 @@ class MainWindow(AnimatedWidget):
     def __init__(
         self,
         parent,
-        parent_button,
         uptime,
         blur,
         blur_background,
@@ -405,7 +319,6 @@ class MainWindow(AnimatedWidget):
         super().__init__(animation_duration, parent)
 
         self.overlay = OverlayWidget(parent, animation_duration, uptime)
-        self.parent_button = parent_button
         self.button_row = button_row
         self.buttons_list = []
         self.current_focus_index = -1
@@ -433,7 +346,7 @@ class MainWindow(AnimatedWidget):
             avatar_label.setProperty("class", "profile-avatar")
             avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             avatar_label.setFixedSize(profile_size, profile_size)
-            avatar_path = _get_user_avatar_path()
+            avatar_path = get_user_avatar_path()
             if avatar_path:
                 pixmap = QPixmap(avatar_path)
                 if not pixmap.isNull():
@@ -458,17 +371,17 @@ class MainWindow(AnimatedWidget):
                     avatar_label.setPixmap(rounded)
             profile_layout.addWidget(avatar_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-            username_label = QLabel(_get_windows_username(), self)
+            username_label = QLabel(get_windows_username(), self)
             username_label.setProperty("class", "profile-username")
             username_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             profile_layout.addWidget(username_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-            account_type_label = QLabel(_get_account_type(), self)
+            account_type_label = QLabel(get_account_type(), self)
             account_type_label.setProperty("class", "profile-account-type")
             account_type_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             profile_layout.addWidget(account_type_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
-            user_email = _get_user_email()
+            user_email = get_user_email()
             if user_email:
                 email_label = QLabel(user_email, self)
                 email_label.setProperty("class", "profile-email")
@@ -496,7 +409,6 @@ class MainWindow(AnimatedWidget):
                 buttons_layout.addLayout(row)
 
             button = QPushButton(self)
-            button.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             button.setProperty("class", f"button {button_name.replace('_', '-')}")
             btn_layout = QVBoxLayout(button)
             btn_layout.setSpacing(0)
@@ -526,17 +438,15 @@ class MainWindow(AnimatedWidget):
         self.center_on_screen()
 
         if blur:
-            Blur(
+            enable_blur(
                 self.winId(),
-                Acrylic=False,
                 DarkMode=False,
                 RoundCorners=True,
                 BorderColor="None",
             )
         if blur_background:
-            Blur(
+            enable_blur(
                 self.overlay.winId(),
-                Acrylic=False,
                 DarkMode=False,
                 RoundCorners=False,
                 BorderColor="None",
@@ -545,7 +455,7 @@ class MainWindow(AnimatedWidget):
         self.fade_in()
 
     def center_on_screen(self):
-        screen = QApplication.screenAt(self.parent_button.mapToGlobal(QtCore.QPoint(0, 0)))
+        screen = QApplication.screenAt(self.parent().mapToGlobal(QtCore.QPoint(0, 0)))
         if screen is None:
             screen = QApplication.primaryScreen()
         screen_geometry = screen.geometry()
@@ -580,7 +490,7 @@ class MainWindow(AnimatedWidget):
                 self._apply_hover(source, True)
             elif event.type() == QtCore.QEvent.Type.Leave:
                 self._apply_hover(source, False)
-        return super(MainWindow, self).eventFilter(source, event)
+        return super().eventFilter(source, event)
 
     def keyPressEvent(self, event):
         key = event.key()

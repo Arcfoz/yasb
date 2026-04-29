@@ -3,15 +3,13 @@ from datetime import datetime
 
 from PyQt6.QtCore import QRect, Qt, QTimer
 from PyQt6.QtGui import QShowEvent, QWheelEvent
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSlider, QVBoxLayout
+from PyQt6.QtWidgets import QLabel, QSlider, QVBoxLayout
 
 from core.utils.tooltip import CustomToolTip, set_tooltip
-from core.utils.utilities import PopupWidget, add_shadow, build_progress_widget, build_widget_label
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.brightness.service import BrightnessService
-from core.utils.win32.bindings.user32 import MONITOR_DEFAULTTONEAREST, user32
+from core.utils.utilities import PopupWidget, build_progress_widget
 from core.validation.widgets.yasb.brightness import BrightnessConfig
 from core.widgets.base import BaseWidget
+from core.widgets.services.brightness.service import BrightnessService
 
 
 class BrightnessWidget(BaseWidget):
@@ -25,7 +23,6 @@ class BrightnessWidget(BaseWidget):
         self._widgets_alt: list[QLabel] = []
 
         # Current state
-        self._hmonitor = None
         self.current_brightness = None
         self._auto_light_timer: QTimer | None = None
         self._initialized = False
@@ -40,16 +37,8 @@ class BrightnessWidget(BaseWidget):
         # Build UI
         self.progress_widget = build_progress_widget(self, self.config.progress_bar.model_dump())
 
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(self, self.config.label, self.config.label_alt, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self.config.label, self.config.label_alt)
 
         # Register callbacks
         self.register_callback("toggle_label", self._toggle_label)
@@ -61,34 +50,24 @@ class BrightnessWidget(BaseWidget):
         self.callback_right = config.callbacks.on_right
         self.callback_middle = config.callbacks.on_middle
 
-        self._hmonitor = None
-        self._initialized = False
-        self._auto_light_started = False
-        self._slider_tooltip = None
-
-    def _get_hmonitor(self) -> int | None:
-        """Get the monitor handle for this widget."""
-        try:
-            hwnd = int(self.winId())
-            return user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
-        except Exception:
-            return None
+    @property
+    def _hmonitor(self) -> int | None:
+        """Bar-resolved monitor handle (set by Bar after position)."""
+        return self.monitor_hwnd
 
     def showEvent(self, a0: QShowEvent | None):
         """Handle widget show event detect monitor and check support."""
         super().showEvent(a0)
         if not self._initialized:
             self._initialized = True
-            self._hmonitor = self._get_hmonitor()
-            # Check if monitor supports brightness
             if self._hmonitor:
                 brightness = self._service.get_brightness(self._hmonitor)
-                if brightness is None:
-                    # Monitor doesn't support brightness control hide widget
-                    self.hide()
+                if brightness is not None:
+                    self.current_brightness = brightness
+                    self._update_label()
                     return
-                self.current_brightness = brightness
-                self._update_label()
+            # No value yet
+            self.hide()
 
     def _on_brightness_changed(self, hmonitor: int, brightness: int | None):
         """Handle brightness change from service (thread-safe via signal)."""
@@ -106,24 +85,18 @@ class BrightnessWidget(BaseWidget):
 
     def get_brightness(self) -> int | None:
         """Get current brightness (cached)."""
-        if self._hmonitor is None:
-            self._hmonitor = self._get_hmonitor()
         if self._hmonitor:
             return self._service.get_brightness(self._hmonitor)
         return None
 
     def set_brightness(self, value: int):
         """Set brightness."""
-        if self._hmonitor is None:
-            self._hmonitor = self._get_hmonitor()
         if self._hmonitor:
             self._service.set_brightness(self._hmonitor, value)
             self.current_brightness = value
             self._update_label()
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
@@ -148,8 +121,6 @@ class BrightnessWidget(BaseWidget):
         self.set_brightness(prev_levels[-1] if prev_levels else levels[-1])
 
     def _toggle_brightness_menu(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_brightness_menu()
 
     def _update_label(self):

@@ -6,7 +6,6 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -18,8 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.utils.alert_dialog import raise_info_alert
-from core.utils.utilities import add_shadow, build_widget_label, refresh_widget_style
-from core.utils.widgets.animation_manager import AnimationManager
+from core.utils.utilities import refresh_widget_style
 from core.validation.widgets.yasb.whkd import WhkdConfig
 from core.widgets.base import BaseWidget
 from settings import SCRIPT_PATH
@@ -259,26 +257,13 @@ class WhkdWidget(BaseWidget):
         self.config = config
 
         # Construct container
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        # Initialize container
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-
-        # Add the container to the main widget layout
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(self, self.config.label, None, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self.config.label, None)
 
         self.register_callback("open_popup", self._open_popup)
         self.callback_left = "open_popup"
 
     def _open_popup(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
 
         # Determine config file location
         whkd_config_home = os.getenv("WHKD_CONFIG_HOME")
@@ -288,7 +273,7 @@ class WhkdWidget(BaseWidget):
             else os.path.join(os.path.expanduser("~"), ".config", "whkdrc")
         )
         if not os.path.exists(file_path):
-            logging.error(f"File not found: {file_path}")
+            logging.error("File not found: %s", file_path)
             raise_info_alert(
                 title="Error",
                 msg=f"The specified file does not exist\n{file_path}",
@@ -299,10 +284,10 @@ class WhkdWidget(BaseWidget):
 
         # Read and process the configuration file
         try:
-            with open(file_path, "r") as f:
+            with open(file_path) as f:
                 raw_lines = f.readlines()
         except Exception as e:
-            logging.error(f"Error reading file: {e}")
+            logging.error("Error reading file: %s", e)
             return
 
         content = self._process_file(raw_lines)

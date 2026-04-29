@@ -148,6 +148,12 @@ user32.KillTimer.restype = BOOL
 user32.FindWindowW.argtypes = [LPCWSTR, LPCWSTR]
 user32.FindWindowW.restype = HWND
 
+user32.SetWindowsHookExW.argtypes = [c_int, LPVOID, HINSTANCE, DWORD]
+user32.SetWindowsHookExW.restype = HANDLE
+
+user32.UnhookWindowsHookEx.argtypes = [HANDLE]
+user32.UnhookWindowsHookEx.restype = BOOL
+
 user32.FindWindowExW.argtypes = [HWND, HWND, LPCWSTR, LPCWSTR]
 user32.FindWindowExW.restype = HWND
 
@@ -204,6 +210,9 @@ user32.GetKeyState.restype = INT
 user32.GetWindowLongW.argtypes = [HWND, INT]
 user32.GetWindowLongW.restype = c_long
 
+user32.GetShellWindow.argtypes = []
+user32.GetShellWindow.restype = HWND
+
 user32.ShowWindowAsync.argtypes = [HWND, INT]
 user32.ShowWindowAsync.restype = BOOL
 
@@ -224,6 +233,22 @@ user32.SendMessageTimeoutW.restype = c_int
 
 user32.EndTask.argtypes = [HWND, BOOL, BOOL]
 user32.EndTask.restype = BOOL
+
+# Keyboard layout functions - HKL is a HANDLE (c_void_p)
+user32.GetKeyboardLayout.argtypes = [DWORD]
+user32.GetKeyboardLayout.restype = HANDLE
+
+user32.GetKeyboardLayoutList.argtypes = [c_int, HANDLE]
+user32.GetKeyboardLayoutList.restype = c_int
+
+user32.ActivateKeyboardLayout.argtypes = [HANDLE, UINT]
+user32.ActivateKeyboardLayout.restype = HANDLE
+
+user32.LoadKeyboardLayoutW.argtypes = [LPCWSTR, UINT]
+user32.LoadKeyboardLayoutW.restype = HANDLE
+
+user32.GetKeyboardLayoutNameW.argtypes = [LPCWSTR]
+user32.GetKeyboardLayoutNameW.restype = BOOL
 
 
 def DefWindowProc(hwnd: int, uMsg: int, wParam: int, lParam: int) -> int:
@@ -320,6 +345,18 @@ def FindWindow(lpClassName: str | None, lpWindowName: str | None):
     return user32.FindWindowW(lpClassName, lpWindowName)
 
 
+def SetWindowsHookEx(idHook: int, lpfn: int, hmod: int, dwThreadId: int) -> int:
+    return int(user32.SetWindowsHookExW(idHook, lpfn, hmod, dwThreadId))
+
+
+def UnhookWindowsHookEx(hhk: int) -> bool:
+    return bool(user32.UnhookWindowsHookEx(hhk))
+
+
+def PostThreadMessage(idThread: int, Msg: int, wParam: int, lParam: int) -> bool:
+    return bool(user32.PostThreadMessageW(idThread, Msg, wParam, lParam))
+
+
 def FindWindowEx(
     hwndParent: int,
     hwndChildAfter: int,
@@ -346,7 +383,7 @@ def IsWindowEnabled(hwnd: int) -> bool:
     return user32.IsWindowEnabled(hwnd)
 
 
-def GetWindowThreadProcessId(hwnd: int, lpdwProcessId: CArgObject) -> int:
+def GetWindowThreadProcessId(hwnd: int, lpdwProcessId: CArgObject | None) -> int:
     return user32.GetWindowThreadProcessId(hwnd, lpdwProcessId)
 
 
@@ -420,6 +457,10 @@ def IsWindowVisible(hwnd: int) -> bool:
 
 def GetWindowLong(hwnd: int, index: int) -> int:
     return int(user32.GetWindowLongW(hwnd, index))
+
+
+def GetShellWindow() -> int:
+    return user32.GetShellWindow()
 
 
 def ShowWindowAsync(hwnd: int, cmd_show: int) -> bool:

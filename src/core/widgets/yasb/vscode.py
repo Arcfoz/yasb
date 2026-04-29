@@ -6,14 +6,11 @@ import re
 import sqlite3
 import subprocess
 import urllib.parse
-from typing import List
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from core.utils.utilities import PopupWidget, add_shadow, build_widget_label
-from core.utils.widgets.animation_manager import AnimationManager
+from core.utils.utilities import PopupWidget
 from core.validation.widgets.yasb.vscode import VSCodeConfig
 from core.widgets.base import BaseWidget
 
@@ -30,18 +27,8 @@ class VSCodeWidget(BaseWidget):
             state_storage_path = os.path.expandvars(r"%APPDATA%\Code\User\globalStorage\state.vscdb")
         self._state_file_path = state_storage_path
 
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(self, self.config.label, self.config.label_alt, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self.config.label, self.config.label_alt)
 
         self.register_callback("toggle_label", self._toggle_label)
         self.register_callback("toggle_menu", self._toggle_menu)
@@ -61,7 +48,7 @@ class VSCodeWidget(BaseWidget):
             path = f"{drive_part}:{rest}"
         return path
 
-    def _load_recent_workspaces(self) -> List[dict]:
+    def _load_recent_workspaces(self) -> list[dict]:
         try:
             conn = sqlite3.connect(self._state_file_path)
             cursor = conn.cursor()
@@ -81,23 +68,19 @@ class VSCodeWidget(BaseWidget):
                             if os.path.exists(file_path):
                                 result_list.append({"file": file_path})
                     else:
-                        logging.error(f"Unexpected entry type: {type(path)}")
+                        logging.error("Unexpected entry type: %s", type(path))
             else:
-                logging.error(f"No data found in {file_path}")
+                logging.error("No data found in %s", file_path)
             conn.close()
             return result_list
         except Exception as e:
-            logging.error(f"Error: {e}")
+            logging.error("Error: %s", e)
             return []
 
     def _toggle_menu(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self.show_menu()
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
@@ -126,7 +109,7 @@ class VSCodeWidget(BaseWidget):
         try:
             subprocess.Popen([self.config.cli_command, folder], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         except subprocess.CalledProcessError as e:
-            logging.error(f"Failed to open VS Code with folder {folder}: {e}")
+            logging.error("Failed to open VS Code with folder %s: %s", folder, e)
         except FileNotFoundError:
             logging.error("VS Code not found in PATH")
         self._menu.hide()
@@ -185,7 +168,6 @@ class VSCodeWidget(BaseWidget):
         container = QWidget()
         container.setProperty("class", "item")
         container.setContentsMargins(0, 0, 8, 0)
-        container.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
 
         container_layout = QHBoxLayout(container)
         container_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)

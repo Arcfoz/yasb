@@ -3,11 +3,8 @@ from enum import StrEnum
 from pydantic import Field
 
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -69,6 +66,7 @@ class GithubConfig(CustomBaseModel):
     token: str = ""
     tooltip: bool = True
     max_notification: int = 30
+    hide_empty: bool = False
     only_unread: bool = False
     show_comment_count: bool = False
     max_field_size: int = 100
@@ -76,8 +74,4 @@ class GithubConfig(CustomBaseModel):
     notification_dot: NotificationDotConfig = NotificationDotConfig()
     menu: GithubMenuConfig = GithubMenuConfig()
     icons: GithubIconsConfig = GithubIconsConfig()
-    animation: AnimationConfig = AnimationConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
-    container_padding: PaddingConfig = PaddingConfig()
     keybindings: list[KeybindingConfig] = []

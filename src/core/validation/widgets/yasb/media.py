@@ -3,12 +3,9 @@ from typing import Literal
 from pydantic import Field
 
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CallbacksConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -74,11 +71,9 @@ class MediaWidgetConfig(CustomBaseModel):
     separator: str = " - "
     class_name: str = ""
     hide_empty: bool = False
-    animation: AnimationConfig = AnimationConfig()
     icons: IconsConfig = IconsConfig()
     media_menu: MediaMenuConfig = MediaMenuConfig()
     media_menu_icons: MediaMenuIconsConfig = MediaMenuIconsConfig()
-    container_padding: PaddingConfig = PaddingConfig()
     scrolling_label: ScrollingLabelConfig = ScrollingLabelConfig()
     progress_bar: ProgressBarConfig = ProgressBarConfig()
     max_field_size: MaxFieldSizeConfig = MaxFieldSizeConfig()
@@ -91,7 +86,5 @@ class MediaWidgetConfig(CustomBaseModel):
     thumbnail_corner_radius: int = Field(default=0, ge=0, le=100)
     symmetric_corner_radius: bool = False
     thumbnail_edge_fade: bool = False
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
     keybindings: list[KeybindingConfig] = []
     callbacks: CallbacksConfig = CallbacksConfig()

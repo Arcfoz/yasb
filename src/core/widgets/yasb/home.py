@@ -3,13 +3,12 @@ import os
 import subprocess
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from core.utils.utilities import PopupWidget, add_shadow, build_widget_label
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.power_menu.power_commands import PowerOperations
+from core.utils.utilities import PopupWidget
 from core.validation.widgets.yasb.home import HomeConfig, MenuItemConfig
 from core.widgets.base import BaseWidget
+from core.widgets.services.power_menu.power_commands import PowerOperations
 
 
 class HomeWidget(BaseWidget):
@@ -19,17 +18,8 @@ class HomeWidget(BaseWidget):
         super().__init__(class_name="home-widget")
         self.config = config
         self.power_operations = PowerOperations()
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        # Initialize container
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-        # Add the container to the main widget layout
-        self.widget_layout.addWidget(self._widget_container)
-        build_widget_label(self, self.config.label, None, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self.config.label, None)
 
         self.register_callback("toggle_menu", self._toggle_menu)
         self.callback_left = self.config.callbacks.on_left
@@ -75,7 +65,7 @@ class HomeWidget(BaseWidget):
             return lambda: (
                 os.startfile(path)
                 if os.path.exists(path)
-                else logging.error(f"The system cannot find the file specified: '{path}'")
+                else logging.error("The system cannot find the file specified: '%s'", path)
             )
 
     def _create_menu(self):
@@ -158,7 +148,6 @@ class HomeWidget(BaseWidget):
         label = QLabel(text)
         label.setProperty("class", "menu-item")
         label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-        label.setCursor(Qt.CursorShape.PointingHandCursor)
 
         # Add label to layout
         item_layout.addWidget(label)
@@ -175,6 +164,4 @@ class HomeWidget(BaseWidget):
         return item
 
     def _toggle_menu(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._create_menu()

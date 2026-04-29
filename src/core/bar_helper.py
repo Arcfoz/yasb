@@ -38,10 +38,33 @@ from core.utils.win32.app_bar import APPBAR_CALLBACK_MESSAGE, AppBarNotify
 from core.utils.win32.bindings import SetWindowPos
 from core.utils.win32.bindings.user32 import KillTimer, RegisterWindowMessage, SetTimer, user32
 from core.utils.win32.structs import MSG
-from core.utils.win32.utilities import apply_qmenu_style
+from core.utils.win32.utils import apply_qmenu_style
 
 # Register TaskbarCreated message to detect Explorer restarts
 WM_TASKBARCREATED = RegisterWindowMessage("TaskbarCreated")
+
+
+class ThemeState:
+    """Centralized dark/light theme state and stylesheet cache for detached widgets."""
+
+    _is_dark = False
+    _stylesheet = None
+
+    @classmethod
+    def is_dark(cls) -> bool:
+        return cls._is_dark
+
+    @classmethod
+    def set_dark(cls, value: bool):
+        cls._is_dark = value
+
+    @classmethod
+    def stylesheet(cls) -> str:
+        return cls._stylesheet or ""
+
+    @classmethod
+    def set_stylesheet(cls, value: str):
+        cls._stylesheet = value
 
 
 class BarAnimationManager(QObject):
@@ -262,7 +285,7 @@ class AutoHideManager(QObject):
                     lambda: self.bar_widget.app_bar_manager.remove_appbar()
                 )
             except Exception as e:
-                logging.error(f"Failed to remove AppBar reservation: {e}")
+                logging.error("Failed to remove AppBar reservation: %s", e)
 
         # Set up detection zone after a short delay
         QTimer.singleShot(self._autohide_delay, self.setup_detection_zone)
@@ -391,7 +414,7 @@ class AutoHideManager(QObject):
             try:
                 SystrayAppBarHelper.execute_without_systray_interference(lambda: self.bar_widget.update_app_bar())
             except Exception as e:
-                logging.error(f"Failed to restore AppBar reservation: {e}")
+                logging.error("Failed to restore AppBar reservation: %s", e)
 
 
 class SystrayAppBarHelper:
@@ -567,9 +590,9 @@ class AppBarManager(QAbstractNativeEventFilter):
                         bw.app_bar_manager.remove_appbar()
                     bw.update_app_bar()
                     reason = "space reservation + fullscreen" if app_bar else "fullscreen detection"
-                    logging.info(f"Re-registered AppBar for {getattr(bw, 'bar_id', '?')} ({reason})")
+                    logging.info("Re-registered AppBar for %s (%s)", getattr(bw, "bar_id", "?"), reason)
                 except Exception as e:
-                    logging.error(f"Failed to re-register bar: {e}")
+                    logging.error("Failed to re-register bar: %s", e)
 
         if needs_systray_workaround:
             SystrayAppBarHelper.execute_without_systray_interference(reregister)
@@ -640,7 +663,7 @@ class MaximizedWindowWatcher(QObject):
     def _check_maximized_windows(self):
         """Check if any top-level window is maximized on the bar's monitor."""
         try:
-            from core.utils.win32.utilities import get_monitor_hwnd, is_window_maximized
+            from core.utils.win32.utils import get_monitor_hwnd, is_window_maximized
 
             bar_monitor = getattr(self.bar_widget, "monitor_hwnd", None)
             if not bar_monitor:
@@ -737,7 +760,7 @@ class OsThemeManager(QObject):
                     value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
                     return value == 0
         except Exception as e:
-            logging.error(f"Failed to determine Windows theme: {e}")
+            logging.error("Failed to determine Windows theme: %s", e)
             return False
 
     def update_theme_class(self):
@@ -755,6 +778,7 @@ class OsThemeManager(QObject):
             self.target_widget.setProperty("class", class_property)
             self._update_styles(self.target_widget)
             self._is_dark_theme = is_dark_theme
+            ThemeState.set_dark(is_dark_theme)
 
     def _update_styles(self, widget):
         """Update styles for widget and its children by unpolishing and re-polishing"""
@@ -775,7 +799,7 @@ class BarContextMenu:
 
     def show(self, position):
         self._menu = QMenu(self.parent)
-        self._menu.setProperty("class", "context-menu")
+        self._menu.setProperty("class", "context-menu dark" if ThemeState.is_dark() else "context-menu")
         self._menu.aboutToHide.connect(self._on_menu_about_to_hide)
         apply_qmenu_style(self._menu)
 
@@ -785,7 +809,9 @@ class BarContextMenu:
 
         # Widgets menu
         widgets_menu = self._menu.addMenu("Active Widgets")
-        widgets_menu.setProperty("class", "context-menu submenu")
+        widgets_menu.setProperty(
+            "class", "context-menu submenu dark" if ThemeState.is_dark() else "context-menu submenu"
+        )
         apply_qmenu_style(widgets_menu)
         self._populate_widgets_menu(widgets_menu)
 
@@ -838,7 +864,7 @@ class BarContextMenu:
                     self.parent._autohide_manager._hide_timer.start(self.parent._autohide_manager._autohide_delay)
 
         except Exception as e:
-            logging.error(f"Failed to restart autohide timer: {e}")
+            logging.error("Failed to restart autohide timer: %s", e)
 
     def _populate_widgets_menu(self, widgets_menu):
         if not any(self._widgets.get(layout) for layout in ["left", "center", "right"]):
@@ -913,7 +939,7 @@ class BarContextMenu:
             widget.hide = controlled_hide
 
         except Exception as e:
-            logging.error(f"Failed to toggle widget {self._get_widget_display_name(widget)}: {e}")
+            logging.error("Failed to toggle widget %s: %s", self._get_widget_display_name(widget), e)
 
     def _get_widget_display_name(self, widget):
         for layout_type, widget_list in self._widgets.items():
@@ -933,7 +959,7 @@ class BarContextMenu:
         try:
             subprocess.Popen("taskmgr", shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e:
-            logging.error(f"Failed to open Task Manager: {e}")
+            logging.error("Failed to open Task Manager: %s", e)
 
     def _take_screenshot(self):
         """Take a screenshot of the bar with proper padding"""
@@ -989,7 +1015,7 @@ class BarContextMenu:
             self._screenshot_flash()
 
         except Exception as e:
-            logging.error(f"Failed to take screenshot: {e}")
+            logging.error("Failed to take screenshot: %s", e)
 
     def _screenshot_flash(self):
         """Create a flashing effect on the bar when taking screenshot"""
@@ -1008,7 +1034,7 @@ class BarContextMenu:
             self.flash_animation.start()
 
         except Exception as e:
-            logging.error(f"Failed to create flash effect: {e}")
+            logging.error("Failed to create flash effect: %s", e)
 
     def _enable_autohide(self):
         """Enable autohide functionality for the bar"""
@@ -1022,7 +1048,7 @@ class BarContextMenu:
                 self.parent._autohide_manager.setup_autohide()
 
         except Exception as e:
-            logging.error(f"Failed to enable autohide: {e}")
+            logging.error("Failed to enable autohide: %s", e)
 
     def _disable_autohide(self):
         """Disable autohide functionality"""
@@ -1036,4 +1062,88 @@ class BarContextMenu:
                 self.parent.show()
 
         except Exception as e:
-            logging.error(f"Failed to disable autohide: {e}")
+            logging.error("Failed to disable autohide: %s", e)
+
+
+class AutoWidthManager(QObject):
+    """Manages auto-width calculation and resize/reposition for bars with width='auto'."""
+
+    def __init__(self, bar_widget: QWidget, parent=None):
+        super().__init__(parent)
+        self.bar_widget = bar_widget
+        self._current_auto_width = 0
+
+    def update(self) -> int:
+        """Calculate current auto width from the layout size hint. Returns the new width."""
+        layout = self.bar_widget._bar_frame.layout()
+        if layout:
+            layout.activate()
+
+        requested = max(self.bar_widget._bar_frame.sizeHint().width(), 0)
+        available = (
+            self.bar_widget._target_screen.geometry().width()
+            - self.bar_widget._padding["left"]
+            - self.bar_widget._padding["right"]
+        )
+        new_width = min(requested, available)
+        self._current_auto_width = new_width
+        return new_width
+
+    def apply(self, new_width: int) -> None:
+        """Resize and reposition the bar using the supplied auto width."""
+        if new_width < 0:
+            return
+
+        bar_height = self.bar_widget._dimensions["height"]
+        screen_geometry = self.bar_widget._target_screen.geometry()
+        bar_x, bar_y = self.bar_widget.bar_pos(
+            new_width,
+            bar_height,
+            screen_geometry.width(),
+            screen_geometry.height(),
+        )
+
+        self.bar_widget.setGeometry(bar_x, bar_y, new_width, bar_height)
+        self.bar_widget._bar_frame.setGeometry(0, 0, new_width, bar_height)
+
+    def sync(self) -> None:
+        """Ensure auto width matches the layout after a DPI/geometry change."""
+        previous_width = self._current_auto_width
+        new_width = self.update()
+
+        if new_width != previous_width or self.bar_widget.width() != new_width:
+            self.apply(new_width)
+
+
+class BarCliManager(QObject):
+    """Handles CLI show/hide/toggle commands for a bar, including app bar reservation management."""
+
+    def __init__(self, bar_widget: QWidget, parent=None):
+        super().__init__(parent)
+        self.bar_widget = bar_widget
+
+    def handle(self, action: str, screen_name: str) -> None:
+        current_screen_matches = not screen_name or self.bar_widget._target_screen.name() == screen_name
+        if not current_screen_matches:
+            return
+
+        autohide_active = self.bar_widget._autohide_manager and self.bar_widget._autohide_manager.is_enabled()
+        manages_app_bar = self.bar_widget._window_flags["windows_app_bar"] and not autohide_active
+
+        if action == "show":
+            self.bar_widget.show()
+            if manages_app_bar:
+                SystrayAppBarHelper.execute_without_systray_interference(self.bar_widget.update_app_bar)
+        elif action == "hide":
+            if manages_app_bar:
+                SystrayAppBarHelper.execute_without_systray_interference(self.bar_widget.try_remove_app_bar)
+            self.bar_widget.hide()
+        elif action == "toggle":
+            if self.bar_widget.isVisible():
+                if manages_app_bar:
+                    SystrayAppBarHelper.execute_without_systray_interference(self.bar_widget.try_remove_app_bar)
+                self.bar_widget.hide()
+            else:
+                self.bar_widget.show()
+                if manages_app_bar:
+                    SystrayAppBarHelper.execute_without_systray_interference(self.bar_widget.update_app_bar)

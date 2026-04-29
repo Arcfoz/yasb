@@ -35,22 +35,23 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.utils.utilities import LoaderLine, PopupWidget, add_shadow, app_data_path, build_widget_label
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.quick_launch.base_provider import ProviderResult
-from core.utils.widgets.quick_launch.context_menu import QuickLaunchContextMenuService
-from core.utils.widgets.quick_launch.icon_utils import load_and_scale_icon, svg_to_pixmap
-from core.utils.widgets.quick_launch.providers.resources.icons import (
+from core.ui.components.loader import LoaderLine
+from core.utils.system import app_data_path
+from core.utils.utilities import PopupWidget
+from core.utils.win32.utils import apply_qmenu_style, find_focused_screen
+from core.utils.win32.window_actions import force_foreground_focus
+from core.validation.widgets.yasb.quick_launch import QuickLaunchConfig
+from core.widgets.base import BaseWidget
+from core.widgets.services.quick_launch.base_provider import ProviderResult
+from core.widgets.services.quick_launch.context_menu import QuickLaunchContextMenuService
+from core.widgets.services.quick_launch.icon_utils import load_and_scale_icon, svg_to_pixmap
+from core.widgets.services.quick_launch.providers.resources.icons import (
     ICON_NO_RESULTS,
     ICON_SEARCH_INPUT,
     ICON_SEARCH_MAIN,
     ICON_SUBMIT,
 )
-from core.utils.widgets.quick_launch.service import QuickLaunchService
-from core.utils.win32.utilities import apply_qmenu_style, find_focused_screen
-from core.utils.win32.window_actions import force_foreground_focus
-from core.validation.widgets.yasb.quick_launch import QuickLaunchConfig
-from core.widgets.base import BaseWidget
+from core.widgets.services.quick_launch.service import QuickLaunchService
 
 
 class ResultListModel(QAbstractListModel):
@@ -398,7 +399,7 @@ class ResultListView(QListView):
 
 class QuickLaunchWidget(BaseWidget):
     validation_schema = QuickLaunchConfig
-    _active_instance: "QuickLaunchWidget | None" = None
+    _active_instance: QuickLaunchWidget | None = None
     _SETTINGS_FILE = "quick_launch_settings.json"
 
     def __init__(self, config: QuickLaunchConfig):
@@ -417,6 +418,9 @@ class QuickLaunchWidget(BaseWidget):
         self._loader: LoaderLine | None = None
 
         self._active_prefix: str | None = None
+        self._last_active_prefix: str | None = None
+        self._last_search_text: str = ""
+        self._remember_last_query: bool = self.config.remember_last_query
         self._prediction_text: str = ""
         self._preview_visible: bool = False
 
@@ -433,15 +437,8 @@ class QuickLaunchWidget(BaseWidget):
             self.config.providers.model_dump(), self.config.max_results, self.config.show_icons, self.config.icon_size
         )
 
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-        self.widget_layout.addWidget(self._widget_container)
-        build_widget_label(self, self.config.label, None, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self.config.label, None)
 
         self.register_callback("toggle_quick_launch", self._toggle_quick_launch)
         self.callback_left = self.config.callbacks.on_left
@@ -449,8 +446,6 @@ class QuickLaunchWidget(BaseWidget):
         self.callback_middle = self.config.callbacks.on_middle
 
     def _toggle_quick_launch(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         active = QuickLaunchWidget._active_instance
         if active is not None and active._popup and active._popup.isVisible() and not active._popup._is_closing:
             active._hide_popup()
@@ -462,18 +457,32 @@ class QuickLaunchWidget(BaseWidget):
         self._dpr = self.screen().devicePixelRatio()
         if not self._popup:
             self._popup = self._create_popup()
-        self._clear_prefix_chip()
-        self._popup.search_input.blockSignals(True)
-        self._popup.search_input.clear()
-        self._popup.search_input.blockSignals(False)
+
+        active_prefix = self._last_active_prefix if self.config.remember_last_query else None
+        search_text = self._last_search_text if self.config.remember_last_query else ""
+
+        if active_prefix:
+            self._set_prefix_chip(active_prefix, search_text.removeprefix(active_prefix).lstrip())
+        else:
+            self._clear_prefix_chip()
+            self._popup.search_input.blockSignals(True)
+            self._popup.search_input.setText(search_text)
+            self._popup.search_input.blockSignals(False)
+
         if self.config.compact_mode:
-            self._set_compact_visible(False)
+            self._set_compact_visible(bool(search_text.strip()) or bool(active_prefix))
+
         self._position_popup()
         self._popup.show()
         force_foreground_focus(int(self._popup.winId()))
-        if not self.config.compact_mode:
-            self._loader.start()
-            self._update_results("")
+
+        if not active_prefix:
+            if not self.config.compact_mode:
+                self._loader.start()
+                self._update_results(search_text)
+            elif search_text.strip():
+                self._update_results(search_text)
+
         self._popup.search_input.setFocus()
         QTimer.singleShot(0, self._reset_scroll_position)
 
@@ -777,6 +786,10 @@ class QuickLaunchWidget(BaseWidget):
         """Handle text changes in the search input, detecting prefix activation."""
         if not self._popup:
             return
+
+        if self._remember_last_query:
+            self._last_search_text = search_text
+
         # Hide prediction immediately; it will reappear when new results arrive
         self._popup.prediction_label.setVisible(False)
         self._prediction_text = ""
@@ -1258,6 +1271,8 @@ class QuickLaunchWidget(BaseWidget):
         if result.action_data.get("_home"):
             prefix = result.action_data.get("prefix", "")
             initial_text = result.action_data.get("initial_text", "")
+            if initial_text and not initial_text.endswith(" "):
+                initial_text += " "
             if prefix and self._popup:
                 self._set_prefix_chip(prefix, initial_text)
             return
@@ -1278,6 +1293,9 @@ class QuickLaunchWidget(BaseWidget):
     def _set_prefix_chip(self, prefix: str, initial_text: str = ""):
         """Activate a prefix chip in the search bar."""
         self._active_prefix = prefix
+        self._last_active_prefix = prefix
+        if initial_text and self._remember_last_query:
+            self._last_search_text = initial_text
         if self._popup:
             self._popup.prefix_chip.setText(prefix)
             self._popup.prefix_chip.setVisible(True)
@@ -1296,6 +1314,7 @@ class QuickLaunchWidget(BaseWidget):
     def _clear_prefix_chip(self):
         """Remove the active prefix chip."""
         self._active_prefix = None
+        self._last_active_prefix = None
         if self._popup:
             self._popup.prefix_chip.setVisible(False)
             self._popup.prefix_chip.setText("")
@@ -1478,7 +1497,7 @@ class QuickLaunchWidget(BaseWidget):
             path = app_data_path(self._SETTINGS_FILE)
             path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
         except Exception as e:
-            logging.debug(f"Failed to save quick launch settings: {e}")
+            logging.debug("Failed to save quick launch settings: %s", e)
 
     def _load_saved_position(self):
         """Load the saved popup position from the settings file."""

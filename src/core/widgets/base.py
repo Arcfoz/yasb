@@ -1,14 +1,15 @@
 import logging
 import re
 import subprocess
-from typing import Any, Callable, Union
+from collections.abc import Callable
+from typing import Any
 
 from pydantic import BaseModel
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QMouseEvent
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QWidget
 
-from core.event_service import EventService
+from core.events.service import EventService
 from core.utils.win32.system_function import function_map
 from core.widgets.registry import register_widget_class
 
@@ -43,7 +44,8 @@ class BaseWidget(QWidget):
             self._widget_frame.setProperty("class", "widget")
 
         self.timer = QTimer(self)
-        self.mousePressEvent = self._handle_mouse_events
+        self.mouseReleaseEvent = self._handle_mouse_events
+        self.contextMenuEvent = lambda event: event.accept()
 
         self.widget_layout.setSpacing(0)
         self.widget_layout.setContentsMargins(0, 0, 0, 0)
@@ -60,11 +62,11 @@ class BaseWidget(QWidget):
         self.register_callback("do_nothing", self._cb_do_nothing)
         self.register_callback("exec", self._cb_execute_subprocess)
 
-        self.callback_default: Union[str, list[str]] = "default"
-        self.callback_timer: Union[str, list[str]] = "default"
-        self.callback_left: Union[str, list[str]] = self.callback_default
-        self.callback_middle: Union[str, list[str]] = self.callback_default
-        self.callback_right: Union[str, list[str]] = self.callback_default
+        self.callback_default: str | list[str] = "default"
+        self.callback_timer: str | list[str] = "default"
+        self.callback_left: str | list[str] = self.callback_default
+        self.callback_middle: str | list[str] = self.callback_default
+        self.callback_right: str | list[str] = self.callback_default
 
         self._event_service = EventService()
         self._hotkey_signal.connect(self._handle_hotkey_event)
@@ -106,7 +108,7 @@ class BaseWidget(QWidget):
         elif event.button() == Qt.MouseButton.RightButton:
             self._run_callback(self.callback_right)
 
-    def _run_callback(self, callback_str: Union[str, list]):
+    def _run_callback(self, callback_str: str | list):
         if " " in callback_str:
             callback_args = list(map(lambda x: x.strip('"'), re.findall(r'".+?"|[^ ]+', callback_str)))
             callback_type = callback_args[0]
@@ -121,7 +123,7 @@ class BaseWidget(QWidget):
         try:
             self.callbacks[callback_type](*callback_args)
         except Exception:
-            logging.exception(f"Failed to execute callback of type '{callback_type}' with args: {callback_args}")
+            logging.exception("Failed to execute callback of type '%s' with args: %s", callback_type, callback_args)
 
     def _timer_callback(self):
         self._run_callback(self.callback_timer)
@@ -134,3 +136,49 @@ class BaseWidget(QWidget):
 
     def _cb_do_nothing(self):
         pass
+
+    def _init_container(self):
+        self._widget_container_layout = QHBoxLayout()
+        self._widget_container_layout.setSpacing(0)
+        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._widget_container = QFrame()
+        self._widget_container.setLayout(self._widget_container_layout)
+        self._widget_container.setProperty("class", "widget-container")
+        self.widget_layout.addWidget(self._widget_container)
+        self._widgets: list[QLabel] = []
+        self._widgets_alt: list[QLabel] = []
+
+    def build_widget_label(
+        self,
+        content: str,
+        content_alt: str | None = None,
+    ):
+        def process_content(content: str, is_alt: bool = False) -> list[QLabel]:
+            label_parts = re.split("(<span.*?>.*?</span>)", content)
+            label_parts = [part for part in label_parts if part]
+            widgets: list[QLabel] = []
+            for part in label_parts:
+                part = part.strip()
+                if not part:
+                    continue
+                if "<span" in part and "</span>" in part:
+                    class_name = re.search(r'class=(["\'])([^"\']+?)\1', part)
+                    class_result = class_name.group(2) if class_name else "icon"
+                    icon = re.sub(r"<span.*?>|</span>", "", part).strip()
+                    label = QLabel(icon)
+                    label.setProperty("class", class_result)
+                else:
+                    label = QLabel(part)
+                    label.setProperty("class", "label alt" if is_alt else "label")
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._widget_container_layout.addWidget(label)
+                widgets.append(label)
+                if is_alt:
+                    label.hide()
+                else:
+                    label.show()
+            return widgets
+
+        self._widgets = process_content(content)
+        if content_alt:
+            self._widgets_alt = process_content(content_alt, is_alt=True)

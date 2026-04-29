@@ -56,7 +56,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.unsigned_dll_name }}
-        path: src/core/utils/widgets/systray/hook/${{ matrix.dll_file }}
+        path: src/core/widgets/services/systray/hook/${{ matrix.dll_file }}
 
     - name: Get unsigned-dll artifact id
       id: get_dll_artifact

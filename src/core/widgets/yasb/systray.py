@@ -23,12 +23,8 @@ from PyQt6.QtWidgets import (
 from win32con import HWND_BROADCAST
 
 from core.bar_helper import AppBarManager
-from core.utils.utilities import add_shadow, app_data_path, refresh_widget_style
-from core.utils.widgets.systray.systray_hook import SystrayHook
-from core.utils.widgets.systray.systray_monitor import IconData, SystrayMonitor
-from core.utils.widgets.systray.systray_popup import SystrayPopup
-from core.utils.widgets.systray.systray_widget import DropWidget, IconState, IconWidget
-from core.utils.widgets.systray.utils import hook_dll_exists
+from core.utils.system import app_data_path
+from core.utils.utilities import refresh_widget_style
 from core.utils.win32.bindings import IsWindow
 from core.utils.win32.bindings.user32 import RegisterWindowMessage, SendNotifyMessage
 from core.utils.win32.constants import (
@@ -39,9 +35,14 @@ from core.utils.win32.constants import (
     NIF_STATE,
     NIF_TIP,
 )
-from core.utils.win32.utilities import apply_qmenu_style, get_windows_host_arch, is_running_under_emulation
+from core.utils.win32.utils import apply_qmenu_style, get_windows_host_arch, is_running_under_emulation
 from core.validation.widgets.yasb.systray import SystrayWidgetConfig
 from core.widgets.base import BaseWidget
+from core.widgets.services.systray.systray_hook import SystrayHook
+from core.widgets.services.systray.systray_monitor import IconData, SystrayMonitor
+from core.widgets.services.systray.systray_popup import SystrayPopup
+from core.widgets.services.systray.systray_widget import DropWidget, IconState, IconWidget
+from core.widgets.services.systray.utils import hook_dll_exists
 
 logger = logging.getLogger("systray_widget")
 
@@ -179,11 +180,6 @@ class SystrayWidget(BaseWidget):
         self.pinned_widget.drag_started.connect(self.on_pinned_drag_started)
         self.pinned_widget.drag_ended.connect(self.on_drag_ended)
 
-        add_shadow(self.widget_container, self.config.container_shadow.model_dump())
-        add_shadow(self.unpinned_widget, self.config.unpinned_shadow.model_dump())
-        add_shadow(self.pinned_widget, self.config.pinned_shadow.model_dump())
-        add_shadow(self.unpinned_vis_btn, self.config.unpinned_vis_btn_shadow.model_dump())
-
         if self.config.show_in_popup:
             # Popup mode: unpinned icons shown in a popup grid
             self._systray_popup = SystrayPopup(
@@ -258,7 +254,7 @@ class SystrayWidget(BaseWidget):
         mgr.suppress()
         taskbar_created_msg = RegisterWindowMessage("TaskbarCreated")
         SendNotifyMessage(HWND_BROADCAST, taskbar_created_msg, 0, 0)
-        logger.debug(f"Sending TaskbarCreated message: {taskbar_created_msg}")
+        logger.debug("Sending TaskbarCreated message: %s", taskbar_created_msg)
         QTimer.singleShot(0, mgr.unsuppress)
         logger.debug("Systray icons refreshed")
 
@@ -310,7 +306,7 @@ class SystrayWidget(BaseWidget):
                 cls._systray_client_thread = None
 
         except Exception as e:
-            logger.debug(f"Error during thread cleanup: {e}")
+            logger.debug("Error during thread cleanup: %s", e)
 
     def set_containers_visibility(self):
         """Update the containers visibility based on the show_unpinned_button setting"""
@@ -388,7 +384,6 @@ class SystrayWidget(BaseWidget):
                     IconState(index=-1, is_pinned=False),
                 ),
             )
-            add_shadow(icon, self.config.btn_shadow.model_dump())
 
             # Place the new icon in the correct layout and index
             icon.is_pinned = saved_data.is_pinned
@@ -401,7 +396,10 @@ class SystrayWidget(BaseWidget):
             self.sort_timer.start(1000)
         self.update_icon_data(icon.data, data)
         icon.update_icon()
+        was_hidden = icon.isHidden()
         icon.setHidden(data.uFlags & NIF_STATE != 0 and data.dwState == 1)
+        if self.config.show_in_popup and was_hidden != icon.isHidden():
+            self._relayout_popup_grid()
         self.pinned_vis_check_timer.start(300)
 
     @pyqtSlot(IconData)
@@ -593,10 +591,10 @@ class SystrayWidget(BaseWidget):
         self.update_current_state()
         self.get_screen_id()
         file_path = app_data_path(f"systray_state_{self.screen_id}.json")
-        logger.debug(f"Saving state to {file_path}")
+        logger.debug("Saving state to %s", file_path)
         saved_state: dict[str, Any] = {}
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 saved_state = json.load(f)
         except json.JSONDecodeError:
             logger.debug("State file decode error. Ignoring.")
@@ -611,10 +609,10 @@ class SystrayWidget(BaseWidget):
         """Load the saved icon position and pinned state from disk."""
         self.get_screen_id()
         file_path = app_data_path(f"systray_state_{self.screen_id}.json")
-        logger.debug(f"Loading state from {file_path}")
+        logger.debug("Loading state from %s", file_path)
         self.current_state = {}
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 state = json.load(f)
                 for k, v in state.items():
                     self.current_state[k] = IconState.from_dict(v)

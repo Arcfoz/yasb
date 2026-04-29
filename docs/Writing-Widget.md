@@ -18,26 +18,24 @@ class MyWidget(BaseWidget):
 
 ## 3. Set up the widget container and layout:
 
+Use the `_init_container()` method inherited from `BaseWidget` to create the standard container:
+
 ```py
-self._widget_container_layout = QHBoxLayout()
-self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-self._widget_container = QFrame()
-self._widget_container.setLayout(self._widget_container_layout)
-self.widget_layout.addWidget(self._widget_container)
+self._init_container()
 ```
 
-## 4. Use **build_widget_label(self, label, label_alt, shadow)** for dynamic labels:
+This creates `self._widget_container_layout` (QHBoxLayout), `self._widget_container` (QFrame with class `"widget-container"`), adds it to `self.widget_layout`, and initializes `self._widgets` and `self._widgets_alt` as empty lists.
 
--   This method allows you to create labels with icons and text dynamically.
+## 4. Use **self.build_widget_label(label, label_alt)** for dynamic labels:
+
+-   This method (inherited from `BaseWidget`) allows you to create labels with icons and text dynamically.
 
 ```py
-from core.utils.utilities import build_widget_label
-build_widget_label(self, self._label_content, self._label_alt_content, self._label_shadow)
+self.build_widget_label(self.config.label, self.config.label_alt)
 ```
-or without shadow and alt label:
+or without alt label:
 ```py
-from core.utils.utilities import build_widget_label
-build_widget_label(self, self._label_content, None, None)
+self.build_widget_label(self.config.label, None)
 ```
 
 -   Or use a custom function if needed - the **build_widget_label()** method:
@@ -87,7 +85,6 @@ build_widget_label(self, self._label_content, None, None)
                  label = QLabel(part)
                  label.setProperty("class", "label")
              label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-             label.setCursor(Qt.CursorShape.PointingHandCursor)
              self._widget_container_layout.addWidget(label)
              widgets.append(label)
              if is_alt:
@@ -106,7 +103,7 @@ build_widget_label(self, self._label_content, None, None)
 -   `strict` typing is required for all fields in the validation model. Otherwise, Pydantic validation will fail.
 -   main validation model name should be in the format of `<WidgetName>Config` for example `CpuConfig` or `BrightnessConfig`.
 -   secondary validation models (also inherited from `CustomBaseModel`) can be named arbitrarily, but it's recommended to use `<FieldName>Config` for consistency.
--   `base_model.py` also contains shared models like `ShadowConfig`, `KeybindingConfig`, `CallbacksConfig`, etc.
+-   `base_model.py` also contains shared models like `KeybindingConfig`, `CallbacksConfig`, etc.
 -   if custom defaults are required for those shared models then a new secondary model should be defined and it should inherit from on of those base shared models.
 -   mutable defaults are accepted in Pydantic models (for example `keybindings: list[KeybindingConfig] = []`). `default_factory` is not required unless specifically needed in that case.
 
@@ -149,7 +146,7 @@ For more information on Pydantic models refer to the [Pydantic documentation](ht
 -   [`CustomWidget`](https://github.com/amnweb/yasb/blob/main/src/core/widgets/yasb/custom.py)
 -   [`ApplicationsWidget`](https://github.com/amnweb/yasb/blob/main/src/core/widgets/yasb/applications.py)
 -   [`HomeWidget`](https://github.com/amnweb/yasb/blob/main/src/core/widgets/yasb/home.py)
--   [`CPU`](https://github.com/amnweb/yasb/blob/main/src/core/widgets/yasb/cpu.py)
+-   [`CpuWidget`](https://github.com/amnweb/yasb/blob/main/src/core/widgets/yasb/cpu.py)
 
 ## 7. Register callbacks and methods:
 

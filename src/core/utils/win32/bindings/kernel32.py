@@ -20,6 +20,7 @@ from ctypes.wintypes import (
     LPDWORD,
     LPVOID,
     LPWSTR,
+    UINT,
     ULONG,
     USHORT,
 )
@@ -198,6 +199,9 @@ kernel32.IsWow64Process2.restype = BOOL
 kernel32.GetCurrentProcess.argtypes = []
 kernel32.GetCurrentProcess.restype = HANDLE
 
+kernel32.GetSystemWindowsDirectoryW.argtypes = [LPWSTR, UINT]
+kernel32.GetSystemWindowsDirectoryW.restype = UINT
+
 # Process enumeration and termination
 kernel32.CreateToolhelp32Snapshot.argtypes = [DWORD, DWORD]
 kernel32.CreateToolhelp32Snapshot.restype = HANDLE
@@ -214,6 +218,28 @@ kernel32.TerminateProcess.restype = BOOL
 # GetLogicalProcessorInformationEx - Processor topology
 kernel32.GetLogicalProcessorInformationEx.argtypes = [ULONG, LPVOID, POINTER(DWORD)]
 kernel32.GetLogicalProcessorInformationEx.restype = BOOL
+
+# PE resource loading
+kernel32.LoadLibraryExW.argtypes = [LPCWSTR, HANDLE, DWORD]
+kernel32.LoadLibraryExW.restype = HANDLE
+
+kernel32.FindResourceW.argtypes = [HANDLE, LPCWSTR, LPCWSTR]
+kernel32.FindResourceW.restype = HANDLE
+
+kernel32.SizeofResource.argtypes = [HANDLE, HANDLE]
+kernel32.SizeofResource.restype = DWORD
+
+kernel32.LoadResource.argtypes = [HANDLE, HANDLE]
+kernel32.LoadResource.restype = HANDLE
+
+kernel32.LockResource.argtypes = [HANDLE]
+kernel32.LockResource.restype = LPVOID
+
+kernel32.FreeLibrary.argtypes = [HANDLE]
+kernel32.FreeLibrary.restype = BOOL
+
+kernel32.LoadLibraryW.argtypes = [LPCWSTR]
+kernel32.LoadLibraryW.restype = HANDLE
 
 
 # --- Python-friendly typed wrapper functions ---
@@ -435,9 +461,21 @@ def GetLastError() -> int:
     return int(kernel32.GetLastError())
 
 
+def LoadLibraryW(lpLibFileName: str) -> int:
+    return int(kernel32.LoadLibraryW(lpLibFileName))
+
+
+def FreeLibrary(hLibModule: int) -> bool:
+    return bool(kernel32.FreeLibrary(hLibModule))
+
+
 def IsWow64Process2(hProcess: int, lpProcessMachine: CArgObject, lpNativeMachine: CArgObject | None) -> bool:
     return bool(kernel32.IsWow64Process2(hProcess, lpProcessMachine, lpNativeMachine))
 
 
 def GetCurrentProcess() -> int:
     return int(kernel32.GetCurrentProcess())
+
+
+def GetSystemWindowsDirectoryW(lpBuffer: Array[c_wchar], uSize: int) -> int:
+    return kernel32.GetSystemWindowsDirectoryW(lpBuffer, uSize)

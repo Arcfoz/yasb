@@ -3,11 +3,8 @@ from typing import Literal
 from pydantic import Field
 
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -75,10 +72,6 @@ class AiChatConfig(CustomBaseModel):
     icons: IconsConfig = IconsConfig()
     notification_dot: NotificationDotConfig = NotificationDotConfig()
     start_floating: bool = True
-    animation: AnimationConfig = AnimationConfig()
-    container_padding: PaddingConfig = PaddingConfig()
     callbacks: AiChatCallbacksConfig = AiChatCallbacksConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
     keybindings: list[KeybindingConfig] = []
     providers: list[ProviderConfig]

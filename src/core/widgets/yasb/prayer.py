@@ -1,32 +1,75 @@
 import json
 import logging
 import re
-import urllib.request
 import urllib.parse
-import threading
 from datetime import datetime, timedelta, date
-from urllib.error import URLError
-import time
-import os
-from core.widgets.base import BaseWidget
-from core.validation.widgets.yasb.prayer import PrayerTimeConfig
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
-from PyQt6.QtCore import Qt, QTimer
 
-from core.utils.utilities import PopupWidget
-from core.utils.widgets.animation_manager import AnimationManager
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
+
+from core.utils.utilities import PopupWidget, refresh_widget_style
+from core.validation.widgets.yasb.prayer import PrayerTimeConfig
+from core.widgets.base import BaseWidget
 
 logger = logging.getLogger("prayer_widget")
 
-# Prayer times that span midnight — they belong to the following calendar day
 _NEXT_DAY_PRAYERS = {"lastthird", "firstthird"}
+
+HEADER = (b"User-Agent", b"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0")
+CACHE_CONTROL = (b"Cache-Control", b"no-cache")
+
+
+class PrayerDataFetcher(QNetworkAccessManager):
+    finished = pyqtSignal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def fetch(self, url: str):
+        request = QNetworkRequest(QUrl(url))
+        request.setRawHeader(*HEADER)
+        request.setRawHeader(*CACHE_CONTROL)
+        reply = self.get(request)
+        reply.finished.connect(lambda: self._handle_reply(reply))  # type: ignore
+
+    def _handle_reply(self, reply: QNetworkReply):
+        try:
+            if reply.error() == QNetworkReply.NetworkError.NoError:
+                data = json.loads(reply.readAll().data().decode())
+                timings = data["data"]["timings"]
+                meta = data["data"]["meta"]
+                result = {
+                    "city": meta["timezone"].split("/")[-1].replace("_", " "),
+                    "fajr": timings["Fajr"],
+                    "sunrise": timings["Sunrise"],
+                    "dhuhr": timings["Dhuhr"],
+                    "asr": timings["Asr"],
+                    "sunset": timings["Sunset"],
+                    "maghrib": timings["Maghrib"],
+                    "isha": timings["Isha"],
+                    "imsak": timings["Imsak"],
+                    "midnight": timings["Midnight"],
+                    "firstthird": timings["Firstthird"],
+                    "lastthird": timings["Lastthird"],
+                }
+                self.finished.emit(result)
+            else:
+                logger.error("Prayer API network error: %s", reply.error().name)
+                self.finished.emit({})
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error("Prayer API response parse error: %s", e)
+            self.finished.emit({})
+        finally:
+            reply.deleteLater()
 
 
 class PrayerTimeWidget(BaseWidget):
     validation_schema = PrayerTimeConfig
 
     def __init__(self, config: PrayerTimeConfig):
-        super().__init__((config.update_interval * 1000), class_name="prayer-time-widget")
+        super().__init__(class_name="prayer-time-widget")
+        self.config = config
         self._label_content = config.label
         self._label_alt_content = config.label_alt
         self._city = config.city
@@ -34,71 +77,121 @@ class PrayerTimeWidget(BaseWidget):
         self._method = config.method
 
         tune_dict = config.tune.model_dump()
-        self._tune = ",".join(
-            str(tune_dict[prayer])
-            for prayer in ["Imsak", "Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Sunset", "Isha", "Midnight"]
+        tune_str = ",".join(
+            str(tune_dict[p])
+            for p in ["Imsak", "Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Sunset", "Isha", "Midnight"]
         )
-        self.api_url = (
+        self._api_url = (
             f"http://api.aladhan.com/v1/timingsByCity"
             f"?city={urllib.parse.quote(self._city)}"
             f"&country={urllib.parse.quote(self._country)}"
             f"&method={self._method}"
-            f"&tune={urllib.parse.quote(self._tune)}"
+            f"&tune={urllib.parse.quote(tune_str)}"
         )
 
-        self.prayer_time_data = None
+        self._fetcher = PrayerDataFetcher(self)
+        self._fetcher.finished.connect(self._on_data_fetched)
+
+        self._fetch_timer = QTimer(self)
+        self._fetch_timer.timeout.connect(self._do_fetch)
+        self._fetch_timer.start(config.update_interval * 1000)
+
+        self._update_timer = QTimer(self)
+        self._update_timer.timeout.connect(self._update_label)
+        self._update_timer.start(60_000)
+
+        self._retry_timer = QTimer(self)
+        self._retry_timer.setSingleShot(True)
+        self._retry_timer.timeout.connect(self._do_fetch)
+
+        self.prayer_time_data: dict | None = None
         self._show_alt_label = False
-        self._animation = config.animation.model_dump()
-        self._prayer_card = config.prayer_card.model_dump()
-        self._padding = config.container_padding.model_dump()
-        self._current_prayer = None
-        self._prayer_start_time = None
-        self._current_prayer_end_time = None
-        self._pre_prayer_time = 5   # minutes before prayer to show "soon"
-        self._post_prayer_time = 10  # minutes after prayer start to keep "active"
+        self._current_prayer: str | None = None
+        self._prayer_start_time: datetime | None = None
+        self._current_prayer_end_time: datetime | None = None
+        self._pre_prayer_time = 5
+        self._post_prayer_time = 10
+        self.last_fetch_date: date | None = None
 
-        self._widget_container_layout: QHBoxLayout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(
-            self._padding["left"], self._padding["top"],
-            self._padding["right"], self._padding["bottom"],
-        )
-
-        self._widget_container: QFrame = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-
-        self.widget_layout.addWidget(self._widget_container)
+        self._init_container()
         self._create_dynamically_label(self._label_content, self._label_alt_content)
 
         self.register_callback("toggle_label", self._toggle_label)
         self.register_callback("toggle_card", self._toggle_card)
         self.register_callback("update_label", self._update_label)
-        self.register_callback("fetch_prayer_time_data", self.fetch_prayer_time_data)
 
         self.callback_left = config.callbacks.on_left
         self.callback_right = config.callbacks.on_right
         self.callback_middle = config.callbacks.on_middle
-        self.callback_timer = "fetch_prayer_time_data"
 
-        self.start_timer()
+        self._load_saved_data()
 
-        self.last_fetch_date: date | None = None
-        self.data_file = os.path.join(os.path.expanduser("~"), ".prayer_time_data.json")
-        self.load_saved_data()
+        if self.prayer_time_data:
+            self._update_label()
 
         if not self.prayer_time_data or self.last_fetch_date != datetime.now().date():
-            self.fetch_prayer_time_data()
+            QTimer.singleShot(0, self._do_fetch)
+
+    # -------------------------------------------------------------------------
+    # Networking
+    # -------------------------------------------------------------------------
+
+    def _do_fetch(self):
+        self._fetcher.fetch(self._api_url)
+
+    @pyqtSlot(dict)
+    def _on_data_fetched(self, data: dict):
+        if not data:
+            if not self._retry_timer.isActive():
+                logger.warning("Prayer API returned empty data. Retrying in 10 seconds.")
+                self._retry_timer.start(10_000)
+            return
+        self.prayer_time_data = data
+        self.last_fetch_date = datetime.now().date()
+        self._save_data()
+        self._update_label()
+
+    # -------------------------------------------------------------------------
+    # Persistence
+    # -------------------------------------------------------------------------
+
+    def _data_file(self) -> str:
+        import os
+        return os.path.join(os.path.expanduser("~"), ".prayer_time_data.json")
+
+    def _load_saved_data(self):
+        import os
+        path = self._data_file()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path) as f:
+                saved = json.load(f)
+            self.prayer_time_data = saved["prayer_time_data"]
+            self.last_fetch_date = date.fromisoformat(saved["last_fetch_date"])
+        except (json.JSONDecodeError, KeyError, ValueError):
+            logger.error("Failed to load saved prayer time data")
+
+    def _save_data(self):
+        try:
+            with open(self._data_file(), "w") as f:
+                json.dump(
+                    {
+                        "prayer_time_data": self.prayer_time_data,
+                        "last_fetch_date": self.last_fetch_date.isoformat(),
+                    },
+                    f,
+                )
+        except OSError:
+            logger.error("Failed to save prayer time data")
 
     # -------------------------------------------------------------------------
     # Time helpers
     # -------------------------------------------------------------------------
 
     def parse_time(self, time_str: str, base_date: date | None = None) -> datetime | None:
-        """Parse HH:MM string into a datetime anchored to *base_date* (today by default)."""
         if not time_str or time_str == "N/A":
             return None
-        # Strip timezone suffix like " (PST)" that aladhan sometimes appends
         time_str = re.sub(r"\s*\(.*?\)\s*$", "", time_str).strip()
         try:
             parts = time_str.split(":")
@@ -106,25 +199,18 @@ class PrayerTimeWidget(BaseWidget):
             anchor = base_date or datetime.now().date()
             return datetime(anchor.year, anchor.month, anchor.day, hours, minutes, 0)
         except (ValueError, IndexError):
-            logger.error(f"Invalid time format: {time_str!r}")
+            logger.error("Invalid time format: %r", time_str)
             return None
 
     def _resolve_prayer_time(self, key: str) -> datetime | None:
-        """Return the correct datetime for a prayer key, accounting for next-day wraparound."""
         raw = self.prayer_time_data.get(key) if self.prayer_time_data else None
         if not raw:
             return None
         today = datetime.now().date()
-        # lastthird / firstthird are after midnight — assign tomorrow's date
         base = today + timedelta(days=1) if key in _NEXT_DAY_PRAYERS else today
         return self.parse_time(raw, base)
 
     def _build_ordered_prayer_list(self) -> list[tuple[str, datetime]]:
-        """
-        Return an ordered list of (name, datetime) pairs for the full day's schedule,
-        starting from after-midnight prayers through to next day's wraparound, with all
-        times correctly dated.
-        """
         if not self.prayer_time_data:
             return []
         keys_in_order = [
@@ -150,7 +236,6 @@ class PrayerTimeWidget(BaseWidget):
 
         now = datetime.now()
 
-        # If we're inside an active prayer window, keep reporting that prayer
         if self._current_prayer and self._current_prayer_end_time and now < self._current_prayer_end_time:
             return self._current_prayer, self._prayer_start_time
 
@@ -160,14 +245,12 @@ class PrayerTimeWidget(BaseWidget):
 
         for i, (key, dt) in enumerate(prayer_list):
             if dt > now:
-                # Check if we just passed the *previous* prayer (within post-prayer window)
                 if i > 0:
                     prev_key, prev_dt = prayer_list[i - 1]
                     if (now - prev_dt).total_seconds() < self._post_prayer_time * 60:
                         return prev_key, prev_dt
                 return key, dt
 
-        # All prayers have passed — wrap to the first one tomorrow
         first_key, first_dt = prayer_list[0]
         tomorrow = now.date() + timedelta(days=1)
         wrapped = first_dt.replace(year=tomorrow.year, month=tomorrow.month, day=tomorrow.day)
@@ -226,14 +309,7 @@ class PrayerTimeWidget(BaseWidget):
         self._widgets = process_content(content)
         self._widgets_alt = process_content(content_alt, is_alt=True)
 
-    def _reload_css(self, label: QLabel):
-        label.style().unpolish(label)
-        label.style().polish(label)
-        label.update()
-
     def _toggle_label(self):
-        if self._animation["enabled"]:
-            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])
         self._show_alt_label = not self._show_alt_label
         for w in self._widgets:
             w.setVisible(not self._show_alt_label)
@@ -241,6 +317,7 @@ class PrayerTimeWidget(BaseWidget):
             w.setVisible(self._show_alt_label)
         self._update_label(update_class=False)
 
+    @pyqtSlot()
     def _update_label(self, update_class: bool = True):
         if self.prayer_time_data is None:
             return
@@ -274,7 +351,7 @@ class PrayerTimeWidget(BaseWidget):
                 widget.setText(text)
                 if update_class:
                     widget.setProperty("class", new_class)
-                    self._reload_css(widget)
+                    refresh_widget_style(widget)
                 if not widget.isVisible():
                     widget.show()
         except Exception:
@@ -285,8 +362,6 @@ class PrayerTimeWidget(BaseWidget):
     # -------------------------------------------------------------------------
 
     def _toggle_card(self):
-        if self._animation["enabled"]:
-            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])
         self._popup_card()
 
     def _popup_card(self):
@@ -294,12 +369,14 @@ class PrayerTimeWidget(BaseWidget):
             logger.warning("Prayer data not yet available")
             return
 
+        prayer_card = self.config.prayer_card
+
         dialog = PopupWidget(
             self,
-            self._prayer_card["blur"],
-            self._prayer_card["round_corners"],
-            self._prayer_card["round_corners_type"],
-            self._prayer_card["border_color"],
+            prayer_card.blur,
+            prayer_card.round_corners,
+            prayer_card.round_corners_type,
+            prayer_card.border_color,
         )
         dialog.setProperty("class", "prayer-card")
 
@@ -307,13 +384,11 @@ class PrayerTimeWidget(BaseWidget):
         main_layout.setSpacing(0)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Header ---
         header = QLabel(f"{self.prayer_time_data['city']}, {self._country}")
         header.setProperty("class", "header")
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(header)
 
-        # --- Build prayer rows ---
         now = datetime.now()
         next_prayer, _, _ = self.time_until_next_prayer()
         current_prayer = self._current_prayer
@@ -370,78 +445,9 @@ class PrayerTimeWidget(BaseWidget):
 
         dialog.adjustSize()
         dialog.setPosition(
-            alignment=self._prayer_card["alignment"],
-            direction=self._prayer_card["direction"],
-            offset_left=self._prayer_card["offset_left"],
-            offset_top=self._prayer_card["offset_top"],
+            alignment=prayer_card.alignment,
+            direction=prayer_card.direction,
+            offset_left=prayer_card.offset_left,
+            offset_top=prayer_card.offset_top,
         )
         dialog.show()
-
-    # -------------------------------------------------------------------------
-    # Data fetching
-    # -------------------------------------------------------------------------
-
-    def fetch_prayer_time_data(self):
-        threading.Thread(target=self._get_prayer_time_data, daemon=True).start()
-
-    def load_saved_data(self):
-        if os.path.exists(self.data_file):
-            try:
-                with open(self.data_file, "r") as f:
-                    saved = json.load(f)
-                self.prayer_time_data = saved["prayer_time_data"]
-                self.last_fetch_date = date.fromisoformat(saved["last_fetch_date"])
-            except (json.JSONDecodeError, KeyError, ValueError):
-                logger.error("Failed to load saved prayer time data")
-
-    def _get_prayer_time_data(self):
-        new_data = self._fetch_from_api(self.api_url)
-        if new_data:
-            self.prayer_time_data = new_data
-            self.last_fetch_date = datetime.now().date()
-            self._save_data()
-        QTimer.singleShot(0, self._update_label)
-
-    def _save_data(self):
-        try:
-            with open(self.data_file, "w") as f:
-                json.dump(
-                    {"prayer_time_data": self.prayer_time_data, "last_fetch_date": self.last_fetch_date.isoformat()},
-                    f,
-                )
-        except OSError:
-            logger.error("Failed to save prayer time data")
-
-    def _fetch_from_api(self, api_url: str) -> dict | None:
-        max_retries = 3
-        retry_delay = 5
-
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"Fetching prayer time data (attempt {attempt + 1})")
-                with urllib.request.urlopen(api_url, timeout=10) as response:
-                    data = json.loads(response.read())
-                    timings = data["data"]["timings"]
-                    meta = data["data"]["meta"]
-                    return {
-                        "city": meta["timezone"].split("/")[-1].replace("_", " "),
-                        "fajr": timings["Fajr"],
-                        "sunrise": timings["Sunrise"],
-                        "dhuhr": timings["Dhuhr"],
-                        "asr": timings["Asr"],
-                        "sunset": timings["Sunset"],
-                        "maghrib": timings["Maghrib"],
-                        "isha": timings["Isha"],
-                        "imsak": timings["Imsak"],
-                        "midnight": timings["Midnight"],
-                        "firstthird": timings["Firstthird"],
-                        "lastthird": timings["Lastthird"],
-                    }
-            except (URLError, json.JSONDecodeError, KeyError) as e:
-                logger.error(f"API error: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                else:
-                    logger.error("Max retries reached")
-                    return None
-        return None

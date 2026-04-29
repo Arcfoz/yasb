@@ -1,20 +1,20 @@
 ### Requirements
-- Nerd Fonts. Install [Nerd Fonts](https://www.nerdfonts.com/font-downloads) ([JetBrainsMono](https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip) recommended)
 - Windows 10 & 11
+- Default YASB theme uses Segoe Fluent Icons font, which is included in Windows 11 by default. **Windows 10 users** need to download and install the font manually from [Microsoft](https://aka.ms/SegoeFluentIcons).
+- For custom themes, It's recommended to install Nerd Fonts, which provides a large collection of patched fonts with additional glyphs/icons. You can download and install Nerd Fonts from their [official website](https://www.nerdfonts.com/). Recommended [JetBrainsMono Propo](https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.zip) 
 
-### Manual Installation (stable release)
+### Installation (stable release)
 1. Go to the [releases page](htpps://github.com/amnweb/yasb/releases).
 2. Choice the architecture that matches your system (x64 or ARM64).
 3. Download the `yasb-{version}-{architecture}.msi` installer.
 4. Run the installer and follow the on-screen instructions.
 
 
-### Manual Installation (latest development build)
+### Installation (latest development build)
 1. Go to the [pre release](https://github.com/amnweb/yasb/releases/tag/dev)
 2. Choice the architecture that matches your system (x64 or ARM64).
 3. Download the `yasb-dev-{architecture}.msi` installer.
 4. Run the installer and follow the on-screen instructions.
-
 
 
 ### Using Package Managers (only stable releases)
@@ -52,10 +52,8 @@ choco install yasb
   - `pip install .` (for regular installation)
   - `pip install -e .[dev]` (for development installation)
   - `pip install -e .[dev,packaging]` (for packaging development installation)
-  - Create the directory `C:/Users/{username}/.config/yasb/` and copy [styles.css](https://github.com/amnweb/yasb/blob/main/src/styles.css) and [config.yaml](https://github.com/amnweb/yasb/blob/main/src/config.yaml) into folder. If you don't have the `.config/yasb/` directory, on first run the application will create it for you. To use a custom directory, set the `YASB_CONFIG_HOME` environment variable.
-  - Configure [styles.css](https://github.com/amnweb/yasb/blob/main/src/styles.css) and [config.yaml](https://github.com/amnweb/yasb/blob/main/src/config.yaml) to your liking.
 - Start the application:
-  - run `python src/main.py` in your terminal (or click [yasb.vbs](https://github.com/amnweb/yasb/blob/main/src/yasb.vbs))
+  - run `python src/main.py`
 
 
 ### Build from source

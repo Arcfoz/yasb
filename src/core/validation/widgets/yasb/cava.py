@@ -4,7 +4,6 @@ from core.validation.widgets.base_model import (
     CallbacksConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
 )
 
 
@@ -14,6 +13,7 @@ class CavaCallbacksConfig(CallbacksConfig):
 
 class CavaConfig(CustomBaseModel):
     class_name: str = ""
+    source: str = "auto"
     bar_height: int = 20
     min_bar_height: int = 1
     bars_number: int = 10
@@ -41,6 +41,5 @@ class CavaConfig(CustomBaseModel):
     hide_empty: bool = False
     bar_type: Literal["bars", "bars_mirrored", "waves", "waves_mirrored"] = "bars"
     edge_fade: int | list[int] = 0
-    container_padding: PaddingConfig = PaddingConfig()
     keybindings: list[KeybindingConfig] = []
     callbacks: CavaCallbacksConfig = CavaCallbacksConfig()

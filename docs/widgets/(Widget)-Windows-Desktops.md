@@ -4,9 +4,6 @@
 | `label_workspace_btn`    | string  | `'{index}'`              | The format string for workspace buttons.                                    |
 | `label_workspace_active_btn` | string | `'{index}'`              | The format string for the active workspace button.                          |
 | `switch_workspace_animation` | string | `'true'`                 | The OS animation to use when switching workspaces.                             |
-| `animation`                | bool   | `false`                   | Buttons animation.   |
-| `container_shadow`      | dict    | `None`                  | Container shadow options.                                |
-| `btn_shadow`            | dict    | `None`                  | Workspace button shadow options.                         |
 | `callbacks`             | dict    | `{'on_left': 'activate_workspace', 'on_middle': 'do_nothing', 'on_right': 'toggle_context_menu'}` | Callbacks for mouse events on workspace buttons. |
 
 ## Example Configuration
@@ -17,11 +14,6 @@ windows_workspaces:
   options:
     label_workspace_btn: "\udb81\udc3d"
     label_workspace_active_btn: "\udb81\udc3e"
-    btn_shadow:
-      enabled: true
-      color: "black"
-      radius: 3
-      offset: [ 1, 1 ]
     callbacks:
       on_left: "activate_workspace"
       on_middle: "do_nothing"
@@ -32,9 +24,6 @@ windows_workspaces:
 - **label_workspace_btn:** The format string for workspace buttons, can be icon, {index} or {name}.
 - **label_workspace_active_btn:** The format string for the active workspace button, can be icon, {index} or {name}.
 - **switch_workspace_animation:** The OS animation to use when switching workspaces. (currently unsupported)
-- **animation:** Buttons animation.
-- **container_shadow:** Container shadow options.
-- **btn_shadow:** Workspace button shadow options.
 - **callbacks:** A dictionary specifying the callbacks for mouse events on workspace buttons. The keys are `on_left`, `on_middle`, and `on_right`, and the values are the names of the callback functions.
 
 ### Available Callbacks
@@ -65,10 +54,12 @@ windows_workspaces:
 .windows-desktops .context-menu .separator {} /*Style for context menu separator.*/
 
 .windows-desktops .rename-dialog {} /*Style for rename dialog.*/
-.windows-desktops .rename-dialog QPushButton{} /*Style for rename dialog buttons.*/
-.windows-desktops .rename-dialog QPushButton:hover{} /*Style for rename dialog buttons hover.*/
-.windows-desktops .rename-dialog QLabel {} /*Style for rename dialog labels.*/
-.windows-desktops .rename-dialog QLineEdit {} /*Style for rename dialog line edit.*/
+.windows-desktops .rename-dialog .popup-title {} /*Style for rename dialog title.*/
+.windows-desktops .rename-dialog .popup-description {} /*Style for rename dialog description.*/
+.windows-desktops .rename-dialog .rename-input {} /*Style for rename dialog input.*/
+.windows-desktops .rename-dialog .button {} /*Style for rename dialog buttons.*/
+.windows-desktops .rename-dialog .button.save {} /*Style for rename dialog save button.*/
+.windows-desktops .rename-dialog .button.cancel {} /*Style for rename dialog cancel button. */
 ```
 
 ### Example
@@ -111,32 +102,61 @@ windows_workspaces:
     background-color: rgba(255,255,255,0.1);
 }
 
-.windows-desktops .rename-dialog {
-    background-color: rgba(17, 17, 27, 0.75);   
+
+.windows-desktops-popup.rename {
+    min-width: 320px;
+    background-color: rgb(43, 43, 43);
 }
-.windows-desktops .rename-dialog QPushButton{
-    background-color:rgba(255,255,255,0.1);
-    color: #ffffff;
-    border: none;
-    padding: 4px 12px;
+.windows-desktops-popup.rename .windows-desktops-popup-container {
+    padding: 16px;
+}
+.windows-desktops-popup.rename .windows-desktops-popup-footer {
+    padding: 16px;
+    background-color:rgb(32, 32, 32)
+}
+.windows-desktops-popup .popup-title {
+    font-size: 16px;
+    font-family: "Segoe UI Variable", "Segoe UI";
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 4px;
+}
+.windows-desktops-popup .popup-description {
+    font-size: 13px;
+    font-family: "Segoe UI Variable", "Segoe UI";
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 12px;
+}
+.windows-desktops-popup .rename-input {
+    font-size: 14px;
+    font-family: "Segoe UI Variable", "Segoe UI";
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 1px solid transparent;
     border-radius: 4px;
+    padding: 4px 8px;
+    outline: none;
+    min-width: 280px;
 }
-.windows-desktops .rename-dialog QPushButton:hover{
-    background-color: #585858;
-    color: #ffffff;
-    border: none;
-    padding: 4px 12px;
+.windows-desktops-popup .rename-input:focus {
+    border: 1px solid #4cc2ff;
+}
+.windows-desktops-popup .button {
     border-radius: 4px;
+    font-family: "Segoe UI Variable", "Segoe UI";
+    font-size: 13px;
+    min-height: 28px;
+    min-width: 120px;
+    margin: 4px 0;
+    background-color: rgb(43, 43, 43);
 }
- 
-.windows-desktops .rename-dialog QLabel {
-    color: #ffffff;
+.windows-desktops-popup .button.save {
+    margin-right: 8px;
 }
-.windows-desktops .rename-dialog QLineEdit {
-    background-color: transparent;
-    border: 1px solid #89b4fa;
-    padding: 4px;
-    color: #ffffff;
+.windows-desktops-popup .button:hover {
+    background-color: rgba(255, 255, 255, 0.15);
 }
 ```
 

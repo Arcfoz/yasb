@@ -4,12 +4,12 @@ import os
 import win32api
 import win32gui
 import win32process
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer
-from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QTimer
+from PyQt6.QtWidgets import QGraphicsOpacityEffect, QLabel, QPushButton
 
 from core.utils.tooltip import set_tooltip
 from core.utils.utilities import refresh_widget_style
-from core.utils.win32.utilities import get_app_name_from_pid, is_window_maximized
+from core.utils.win32.utils import get_app_name_from_pid, is_window_maximized
 from core.utils.win32.window_actions import (
     close_application,
     maximize_window,
@@ -187,15 +187,7 @@ class WindowControlsWidget(BaseWidget):
         self._hide_anim = None
         self._opacity_anim = None
 
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-
-        self.widget_layout.addWidget(self._widget_container)
+        self._init_container()
 
         self._opacity_effect = QGraphicsOpacityEffect(self._widget_container)
         self._opacity_effect.setOpacity(0.0)
@@ -217,7 +209,6 @@ class WindowControlsWidget(BaseWidget):
             label_text = getattr(self.config.button_labels, btn_name, btn_name)
             btn = QPushButton(label_text)
             btn.setProperty("class", f"btn {btn_name}")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             set_tooltip(btn, btn_name.capitalize())
             btn.clicked.connect(self._make_button_handler(btn_name))
             self._widget_container_layout.addWidget(btn)
@@ -272,7 +263,7 @@ class WindowControlsWidget(BaseWidget):
                         set_foreground(hwnd)
                         restore_window(hwnd)
                 except Exception:
-                    logging.exception(f"Failed to execute {btn_name} on HWND {hwnd}")
+                    logging.exception("Failed to execute %s on HWND %s", btn_name, hwnd)
 
         return handler
 

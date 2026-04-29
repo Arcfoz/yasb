@@ -12,18 +12,17 @@ from PyQt6.QtGui import QMouseEvent, QPixmap
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from core.utils.tooltip import set_tooltip
-from core.utils.utilities import PopupWidget, add_shadow, refresh_widget_style
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.weather.api import IconFetcher, WeatherDataFetcher
-from core.utils.widgets.weather.models import WeatherApiResponse
-from core.utils.widgets.weather.widgets import (
+from core.utils.utilities import PopupWidget, refresh_widget_style
+from core.validation.widgets.yasb.weather import WeatherWidgetConfig
+from core.widgets.base import BaseWidget
+from core.widgets.services.weather.api import IconFetcher, WeatherDataFetcher
+from core.widgets.services.weather.models import WeatherApiResponse
+from core.widgets.services.weather.widgets import (
     ClickableWidget,
     HourlyData,
     HourlyDataLineWidget,
     HourlyTemperatureScrollArea,
 )
-from core.validation.widgets.yasb.weather import WeatherWidgetConfig
-from core.widgets.base import BaseWidget
 
 
 class WeatherWidget(BaseWidget):
@@ -68,18 +67,7 @@ class WeatherWidget(BaseWidget):
         self._weather_card_daily_widgets: list[ClickableWidget] = []
 
         # Construct container
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Initialize container
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, config.container_shadow.model_dump())
-
-        # Add the container to the main widget layout
-        self.widget_layout.addWidget(self._widget_container)
+        self._init_container()
         self._create_dynamically_label(self._label_content, self._label_alt_content)
 
         self.register_callback("toggle_label", self._toggle_label)
@@ -94,8 +82,6 @@ class WeatherWidget(BaseWidget):
             self._weather_fetcher.start()
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)  # type: ignore
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
@@ -104,8 +90,6 @@ class WeatherWidget(BaseWidget):
         self._update_label(update_class=False)
 
     def _toggle_card(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)  # type: ignore
         self._popup_card()
 
     def _popup_card(self):
@@ -185,7 +169,6 @@ class WeatherWidget(BaseWidget):
                 btn = QLabel(icon)
                 btn.setProperty("class", f"hourly-data-button{' active' if data_type == default_data_type else ''}")
                 btn.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 set_tooltip(btn, data_type.capitalize(), delay=400, position="top")
                 buttons_layout.addWidget(btn)
                 buttons.append(btn)
@@ -362,7 +345,7 @@ class WeatherWidget(BaseWidget):
 
                 temp_icon_fetcher.finished.connect(update_failed_icons)  # type: ignore
             except Exception as e:
-                logging.debug(f"Failed to update weather card icons: {e}")
+                logging.debug("Failed to update weather card icons: %s", e)
 
     def _set_pixmap(self, label: QLabel, icon_bytes: bytes):
         """Set the pixmap for the day icon label."""
@@ -396,8 +379,6 @@ class WeatherWidget(BaseWidget):
                     label.setProperty("class", "label alt" if is_alt else "label")
                     label.setText("weather update...")
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                label.setCursor(Qt.CursorShape.PointingHandCursor)
-                add_shadow(label, self.config.label_shadow.model_dump())
                 self._widget_container_layout.addWidget(label)
                 widgets.append(label)
                 if is_alt:
@@ -440,7 +421,7 @@ class WeatherWidget(BaseWidget):
                         precip.append(f"Snow {snow}")
                     tooltip += f"<br><br>Precipitation<br>{' / '.join(precip)}"
             except (ValueError, KeyError) as e:
-                logging.debug(f"Could not parse precipitation for tooltip: {e}")
+                logging.debug("Could not parse precipitation for tooltip: %s", e)
 
             set_tooltip(self, tooltip)
 
@@ -473,7 +454,7 @@ class WeatherWidget(BaseWidget):
                     active_widgets[widget_index].show()
                 widget_index += 1
         except Exception as e:
-            logging.exception(f"Failed to update label: {e}")
+            logging.exception("Failed to update label: %s", e)
 
     def _format_date_string(self, date_str: str):
         date_obj = datetime.strptime(date_str, "%Y-%m-%d")

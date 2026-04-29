@@ -3,12 +3,9 @@ from typing import Literal
 from pydantic import Field, field_validator
 
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CallbacksConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -43,8 +40,6 @@ class GalleryConfig(CustomBaseModel):
     image_spacing: int = Field(default=5, ge=0, le=100)
     lazy_load: bool = True
     lazy_load_fadein: int = Field(default=200, ge=0, le=1000)
-    lazy_load_delay: int = Field(default=0, ge=0, le=1000)  # Deprecated
-    enable_cache: bool = False  # Deprecated
 
 
 class CallbacksWallpapersConfig(CallbacksConfig):
@@ -61,9 +56,5 @@ class WallpapersConfig(CustomBaseModel):
     tooltip: bool = True
     run_after: list[str] = []
     gallery: GalleryConfig = GalleryConfig()
-    animation: AnimationConfig = AnimationConfig()
-    container_padding: PaddingConfig = PaddingConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
     keybindings: list[KeybindingConfig] = []
     callbacks: CallbacksWallpapersConfig = CallbacksWallpapersConfig()

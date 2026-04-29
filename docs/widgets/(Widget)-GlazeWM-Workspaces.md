@@ -8,16 +8,12 @@
 | `active_empty_label`     | string  | `'{name}'`                                       | Optional label for the currently active workspace (has no windows opened). |
 | `focused_populated_label`| string  | `'{name}'`                                       | Optional label for the currently focused workspace (has opened windows). Falls back to `active_populated_label` if not set.  |
 | `focused_empty_label`    | string  | `'{name}'`                                       | Optional label for the currently focused workspace (has no windows opened). Falls back to `active_empty_label` if not set. |
-| `hide_empty_workspaces`  | boolean | `true`                                           | Whether to hide empty workspaces.                                           |
 | `hide_if_offline`        | boolean | `false`                                          | Whether to hide workspaces widget if GlazeWM is offline.                    |
 | `monitor_exclusive`      | boolean | `true`                                           | If `true`, show monitor-local workspaces (default). If `false`, aggregate active workspaces from GlazeWM IPC and show them on every bar. |
 | `glazewm_server_uri`     | string  | `'ws://localhost:6123'`                          | Optional GlazeWM server uri.                                                |
 | `enable_scroll_switching` | boolean | `true`      | Enable scroll switching between workspaces.                                 |
 | `reverse_scroll_direction` | boolean | `false`      | Reverse scroll direction.                                                  |
-| `container_shadow`       | dict    | `None`                                           | Container shadow options.                                                   |
-| `btn_shadow`             | dict    | `None`                                           | Workspace button shadow options.                                            |
 | `app_icons`    | dict    | `{'enabled_populated': False, 'enabled_active': False, 'enabled_focused': None, 'size': 16, 'max_icons': 0, 'hide_label': False, 'hide_duplicates': False, 'hide_floating': False}` | Controls the display of opened app icons per workspace. `enabled_focused` falls back to `enabled_active` if not explicitly set to a non-None bool value.  |
-| `animation`  | boolean | `false`      | Buttons animation.    
 
 ## Example Configuration
 
@@ -26,15 +22,9 @@ glazewm_workspaces:
   type: "glazewm.workspaces.GlazewmWorkspacesWidget"
   options:
     offline_label: "GlazeWM Offline"
-    hide_empty_workspaces: true
     hide_if_offline: false
     monitor_exclusive: true
     enable_scroll_switching: true
-    btn_shadow:
-      enabled: true
-      color: "black"
-      radius: 3
-      offset: [ 1, 1 ]
     app_icons: 
       enabled_populated: false
       enabled_active: false
@@ -43,7 +33,6 @@ glazewm_workspaces:
       hide_label: false
       hide_duplicates: false
       hide_floating: false
-    animation: false
 
     # By default workspace names are fetched from GlazeWM and "display_name" option takes priority over "name".
     # However, you can customize populated and empty labels here using {name} and {display_name} placeholders if needed.
@@ -62,14 +51,11 @@ glazewm_workspaces:
 - **active_empty_label:** Optional label for the currently active workspace (has no windows opened). If not set, name or display_name from GlazeWM will be used.
 - **focused_populated_label:** Optional label for the currently focused workspace (has windows opened). If not set, **active_populated_label** will be used, falling back to name or display_name from GlazeWM.
 - **focused_empty_label:** Optional label for the currently focused workspace (has no windows opened). If not set, **active_empty_label** will be used, falling back to name or display_name from GlazeWM.
-- **hide_empty_workspaces:** Whether to hide empty workspaces.
 - **hide_if_offline:** Whether to hide workspaces widget if GlazeWM is offline.
 - **monitor_exclusive:** If enabled (default), follows monitor-local workspace rendering. If disabled, the widget renders active workspaces from GlazeWM IPC on all bars and highlights the globally focused workspace using IPC focus state.
 - **glazewm_server_uri:** Optional GlazeWM server uri if it ever changes on GlazeWM side.
 - **enable_scroll_switching:** Enable scroll switching between workspaces.
 - **reverse_scroll_direction:** Reverse scroll direction for switching workspaces.
-- **container_shadow:** Container shadow options.
-- **btn_shadow:** Workspace button shadow options.
 - **app_icons:** Controls the display of opened app icons per workspace.
   - **enabled_populated:** Whether to show app icons in populated workspaces.
   - **enabled_active:** Whether to show app icons in the active workspace.
@@ -79,14 +65,6 @@ glazewm_workspaces:
   - **hide_label:** Whether to hide the label of the workspace buttons that app icons are displayed.
   - **hide_duplicates:** Whether to hide duplicate app icons.
   - **hide_floating:** Whether to hide floating window app icons.
-- **label_shadow:** Label shadow options for labels.
-- **animation:** Buttons animation (used only when app_icons is enabled)
-
-## Note on Shadows
-`container_shadow` is applied to the container if it's not transparent.
-If it is transparent, container shadows will be applied to the `btn` instead.
-This can cause double shadows if you have `btn_shadow` already.
-Apply the shadows only to the container that is actually visible.
 
 ## Note on Workspace Names
 In GlazeWM config use "1", "2", "3" for workspace "name" and NOT some custom string. This will ensure proper sorting of workspaces.

@@ -6,7 +6,7 @@ Thank you for your interest in contributing to YASB! This guide will help you ge
 
 ### Prerequisites
 
-- Python 3.12
+- Python 3.14 or higher
 - Git
 - A Windows development environment (YASB is Windows-only)
 
@@ -72,24 +72,6 @@ ruff check .
 
 # Fix auto-fixable issues
 ruff check --fix .
-```
-
-### Project Structure
-
-```
-yasb/
-├── src/
-│   ├── core/
-│   │   ├── widgets/         # Widget implementations
-│   │   └── validation/      # Widget validation schemas
-│   ├── config.yaml          # Default configuration
-│   ├── styles.css           # Default styles
-│   └── main.py              # Application entry point
-├── docs/                    # Documentation
-├── demo/                    # Demo images
-├── .github/                 # GitHub workflows and templates
-├── pyproject.toml           # Project configuration
-└── README.md
 ```
 
 ## Contributing Guidelines

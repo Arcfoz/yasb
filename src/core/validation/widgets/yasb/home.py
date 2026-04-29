@@ -1,10 +1,7 @@
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CallbacksConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -38,7 +35,6 @@ class CallbacksHomeConfig(CallbacksConfig):
 class HomeConfig(CustomBaseModel):
     label: str = "\ue71a"
     menu_list: list[MenuItemConfig] | None = None
-    container_padding: PaddingConfig = PaddingConfig()
     power_menu: bool = True
     system_menu: bool = True
     blur: bool = False
@@ -47,12 +43,8 @@ class HomeConfig(CustomBaseModel):
     border_color: str = "System"
     alignment: str = "left"
     direction: str = "down"
-    distance: int = 6
     offset_top: int = 6
     offset_left: int = 0
     menu_labels: MenuLabelsConfig = MenuLabelsConfig()
-    animation: AnimationConfig = AnimationConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
     keybindings: list[KeybindingConfig] = []
     callbacks: CallbacksHomeConfig = CallbacksHomeConfig()

@@ -1,12 +1,9 @@
 from pydantic import Field
 
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CallbacksConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -69,8 +66,4 @@ class LibreMonitorConfig(CustomBaseModel):
     server_password: str = ""
     callbacks: LibreMonitorCallbacksConfig = LibreMonitorCallbacksConfig()
     libre_menu: LibreMenuConfig = LibreMenuConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
-    container_padding: PaddingConfig = PaddingConfig()
-    animation: AnimationConfig = AnimationConfig()
     keybindings: list[KeybindingConfig] = []

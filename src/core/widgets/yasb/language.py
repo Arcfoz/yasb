@@ -5,12 +5,11 @@ import re
 import winreg
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCursor, QMouseEvent
+from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout
 from win32con import WM_INPUTLANGCHANGEREQUEST
 
-from core.utils.utilities import PopupWidget, add_shadow, build_widget_label, refresh_widget_style
-from core.utils.widgets.animation_manager import AnimationManager
+from core.utils.utilities import PopupWidget, refresh_widget_style
 from core.utils.win32.bindings import (
     kernel32,
     user32,
@@ -40,23 +39,10 @@ class LanguageWidget(BaseWidget):
         )
         self.config = config
         self._show_alt_label = False
-        # Construct container
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        # Initialize container
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-        # Add the container to the main widget layout
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(
-            self,
+        self._init_container()
+        self.build_widget_label(
             self.config.label,
             self.config.label_alt,
-            self.config.label_shadow.model_dump(),
         )
 
         self.register_callback("toggle_label", self._toggle_label)
@@ -80,8 +66,6 @@ class LanguageWidget(BaseWidget):
         self.start_timer()
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
@@ -90,8 +74,6 @@ class LanguageWidget(BaseWidget):
         self._update_label()
 
     def _toggle_menu(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_language_menu()
 
     def _update_label(self):
@@ -161,15 +143,14 @@ class LanguageWidget(BaseWidget):
 
         # Get available languages
         available_languages = self._get_available_languages()
-        current_lang_id = self._get_current_language_id()
+        current_layout_handle = self._get_current_layout_handle()
 
         # Create language items
         for lang_info in available_languages:
-            self._create_language_item(main_layout, lang_info, lang_info["id"] == current_lang_id)
+            self._create_language_item(main_layout, lang_info, lang_info["id"] == current_layout_handle)
 
         footer_label = QLabel("More keyboard settings")
         footer_label.setProperty("class", "footer")
-        footer_label.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
 
         footer_label.mousePressEvent = self._on_settings_click
         main_layout.addWidget(footer_label)
@@ -191,7 +172,6 @@ class LanguageWidget(BaseWidget):
         """Create a language menu item"""
         container = QFrame()
         container.setProperty("class", f"language-item{' active' if is_current else ''}")
-        container.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         container.setContentsMargins(0, 0, 0, 0)
 
         container_layout = QHBoxLayout(container)
@@ -227,7 +207,7 @@ class LanguageWidget(BaseWidget):
             if a0 and a0.button() == Qt.MouseButton.LeftButton:
                 success = self._switch_to_language(lang_info["id"])
                 if not success:
-                    logging.error(f"Failed to switch to {lang_info['name']}")
+                    logging.error("Failed to switch to %s", lang_info["name"])
                 self._menu.hide()
 
         container.mousePressEvent = mouse_press_handler
@@ -302,7 +282,7 @@ class LanguageWidget(BaseWidget):
                                         k_layouts, _ = winreg.QueryValueEx(key, "Layout Display Name")
                                     except FileNotFoundError:
                                         pass
-                        except WindowsError:
+                        except OSError:
                             pass
                 except:
                     pass
@@ -310,7 +290,7 @@ class LanguageWidget(BaseWidget):
                 if lang_name and lang_code:
                     languages.append(
                         {
-                            "id": lang_id,
+                            "id": layout_handle,
                             "handle": layout_handle,
                             "name": lang_name,
                             "code": lang_code,
@@ -406,7 +386,7 @@ class LanguageWidget(BaseWidget):
 
             return True
         except Exception as e:
-            logging.error(f"Error switching language: {e}")
+            logging.error("Error switching language: %s", e)
             return False
 
     # Get the current keyboard layout

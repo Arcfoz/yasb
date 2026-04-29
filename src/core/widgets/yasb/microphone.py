@@ -5,19 +5,16 @@ from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QWheelEvent
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
+from core.utils.qobject import is_valid_qobject
 from core.utils.tooltip import CustomToolTip, set_tooltip
 from core.utils.utilities import (
     PopupWidget,
-    add_shadow,
     build_progress_widget,
-    build_widget_label,
-    is_valid_qobject,
     refresh_widget_style,
 )
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.microphone.service import AudioInputService
 from core.validation.widgets.yasb.microphone import MicrophoneConfig
 from core.widgets.base import BaseWidget
+from core.widgets.services.microphone.service import AudioInputService
 
 
 class MicrophoneWidget(BaseWidget):
@@ -32,16 +29,8 @@ class MicrophoneWidget(BaseWidget):
 
         self.progress_widget = build_progress_widget(self, self.config.progress_bar.model_dump())
 
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(self, self.config.label, self.config.label_alt, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self.config.label, self.config.label_alt)
 
         self.register_callback("toggle_label", self._toggle_label)
         self.register_callback("toggle_mute", self.toggle_mute)
@@ -72,13 +61,11 @@ class MicrophoneWidget(BaseWidget):
                     if microphone:
                         self.show_menu()
                 except Exception as e:
-                    logging.debug(f"Cannot show microphone menu after device change: {e}")
+                    logging.debug("Cannot show microphone menu after device change: %s", e)
 
         self._update_label()
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
@@ -105,7 +92,7 @@ class MicrophoneWidget(BaseWidget):
                 min_icon = self._get_mic_icon()
                 min_level = self.config.mute_text if mute_status == 1 else f"{mic_level}%"
             except Exception as e:
-                logging.error(f"Failed to get microphone info: {e}")
+                logging.error("Failed to get microphone info: %s", e)
                 return
 
         label_options = {"{icon}": min_icon, "{level}": min_level}
@@ -225,15 +212,13 @@ class MicrophoneWidget(BaseWidget):
         return mic_icon
 
     def toggle_mute(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         if self.audio_endpoint is None:
             return
         try:
             current_mute_status = self.audio_endpoint.GetMute()
             self.audio_endpoint.SetMute(not current_mute_status, None)
         except Exception as e:
-            logging.error(f"Failed to toggle microphone mute: {e}")
+            logging.error("Failed to toggle microphone mute: %s", e)
 
     def _increase_volume(self):
         if self.audio_endpoint is None:
@@ -247,7 +232,7 @@ class MicrophoneWidget(BaseWidget):
             self._update_slider_value()
             self._update_label()
         except Exception as e:
-            logging.error(f"Failed to increase microphone volume: {e}")
+            logging.error("Failed to increase microphone volume: %s", e)
 
     def _decrease_volume(self):
         if self.audio_endpoint is None:
@@ -261,7 +246,7 @@ class MicrophoneWidget(BaseWidget):
             self._update_slider_value()
             self._update_label()
         except Exception as e:
-            logging.error(f"Failed to decrease microphone volume: {e}")
+            logging.error("Failed to decrease microphone volume: %s", e)
 
     def wheelEvent(self, event: QWheelEvent):
         if self.audio_endpoint is None:
@@ -383,4 +368,4 @@ class MicrophoneWidget(BaseWidget):
                 if hasattr(self, "volume_slider"):
                     self._show_slider_tooltip(self.volume_slider, value)
             except Exception as e:
-                logging.error(f"Failed to set microphone volume: {e}")
+                logging.error("Failed to set microphone volume: %s", e)

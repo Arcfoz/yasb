@@ -28,7 +28,7 @@ from win32con import (
     OPEN_EXISTING,
 )
 
-from core.utils.utilities import is_process_running
+from core.utils.process import is_process_running
 from core.utils.win32.bindings import (
     CloseHandle,
     CreateFile,
@@ -36,15 +36,14 @@ from core.utils.win32.bindings import (
     WriteFile,
 )
 from core.utils.win32.constants import INVALID_HANDLE_VALUE
-from settings import APP_NAME, BUILD_VERSION, CLI_VERSION, RELEASE_CHANNEL
+from settings import APP_NAME, BUILD_VERSION, CLI_VERSION, DEFAULT_CONFIG_DIRECTORY, RELEASE_CHANNEL, SCRIPT_PATH
 
 BUFSIZE = 65536
 YASB_VERSION = BUILD_VERSION
 YASB_CLI_VERSION = CLI_VERSION
 YASB_RELEASE_CHANNEL = RELEASE_CHANNEL
 
-INSTALLATION_PATH = os.path.abspath(os.path.join(__file__, "../../.."))
-EXE_PATH = os.path.join(INSTALLATION_PATH, "yasb.exe")
+EXE_PATH = os.path.join(SCRIPT_PATH, "yasb.exe")
 AUTOSTART_FILE = EXE_PATH if os.path.exists(EXE_PATH) else None
 
 CLI_SERVER_PIPE_NAME = r"\\.\pipe\yasb_pipe_cli"
@@ -347,6 +346,12 @@ class CLIHandler:
         )
 
         subparsers.add_parser(
+            "config-dir",
+            help="Open config directory in file explorer",
+            add_help=False,
+        )
+
+        subparsers.add_parser(
             "help",
             help="Show help message",
             add_help=False,
@@ -356,11 +361,22 @@ class CLIHandler:
             help="Tail yasb process logs (cancel with Ctrl-C)",
             add_help=False,
         )
+        subparsers.add_parser(
+            "migrate-config",
+            help="Find and fix deprecated options in config",
+            add_help=False,
+        )
         parser.add_argument(
             "-v",
             "--version",
             action="store_true",
             help="Show program's version number and exit.",
+        )
+        parser.add_argument(
+            "-c",
+            "--config",
+            action="store_true",
+            help="Print config directory path",
         )
         parser.add_argument(
             "-h",
@@ -536,11 +552,8 @@ class CLIHandler:
             from pathlib import Path
 
             # Determine config path
-            config_home = os.environ.get("YASB_CONFIG_HOME")
-            if config_home:
-                config_path = Path(config_home)
-            else:
-                config_path = Path.home() / ".config" / "yasb"
+
+            config_path = Path(DEFAULT_CONFIG_DIRECTORY)
 
             # Stop YASB if it is running
             for proc in ["yasb.exe", "yasb_themes.exe"]:
@@ -560,7 +573,7 @@ class CLIHandler:
             # Clear all files in app_data_folder if it exists
             import tempfile
 
-            from core.utils.utilities import app_data_path
+            from core.utils.system import app_data_path
 
             app_data_folder = app_data_path()
             if app_data_folder.exists() and app_data_folder.is_dir():
@@ -586,6 +599,71 @@ class CLIHandler:
             print("Reset complete.")
             sys.exit(0)
 
+        elif args.command == "config-dir":
+            try:
+                subprocess.Popen(["explorer", DEFAULT_CONFIG_DIRECTORY])
+            except Exception as e:
+                print(f"Failed to open config directory: {e}")
+            sys.exit(0)
+
+        elif args.command == "migrate-config":
+            from pathlib import Path
+
+            from core.validation.deprecation import migrate_config
+
+            config_path = Path(DEFAULT_CONFIG_DIRECTORY) / "config.yaml"
+            if not config_path.exists():
+                print(f"Config file not found: {config_path}")
+                sys.exit(1)
+
+            try:
+                raw = config_path.read_text(encoding="utf-8")
+            except Exception as e:
+                print(f"Failed to read config: {e}")
+                sys.exit(1)
+
+            new_text, changes = migrate_config(raw)
+            if not changes:
+                print("No deprecated options found. Your config is up to date.")
+                sys.exit(0)
+
+            print(f"\nFound {len(changes)} deprecated option(s) in your config:\n")
+            for change in changes:
+                if change["action"] == "remove":
+                    print(f"  {Format.yellow}{change['path']}{Format.reset}")
+                    print(f"    Will be removed. {change['message']}")
+                elif change["action"] == "rename":
+                    print(
+                        f"  {Format.yellow}{change['path']}{Format.reset} -> {Format.green}{change['new_name']}{Format.reset}"
+                    )
+                    print(f"    Will be renamed. {change['message']}")
+                print()
+
+            confirm = input("Apply changes? (Y/n): ").strip().lower()
+            if confirm not in ["y", "yes", ""]:
+                print("Migration cancelled.")
+                sys.exit(0)
+
+            backup_path = config_path.with_suffix(".yaml.bak")
+            try:
+                backup_path.write_text(raw, encoding="utf-8")
+                print(f"Backup saved to {backup_path}")
+            except Exception as e:
+                print(f"Failed to create backup: {e}")
+                sys.exit(1)
+
+            try:
+                config_path.write_text(new_text, encoding="utf-8")
+                print(f"Config migrated successfully. {len(changes)} option(s) updated.")
+            except Exception as e:
+                print(f"Failed to write config: {e}")
+                sys.exit(1)
+            sys.exit(0)
+
+        elif args.config:
+            print(DEFAULT_CONFIG_DIRECTORY)
+            sys.exit(0)
+
         elif args.command == "help" or args.help:
             print(
                 textwrap.dedent(f"""\
@@ -607,17 +685,20 @@ class CLIHandler:
                   update                    Update the application
                   log                       Tail yasb process logs (cancel with Ctrl-C)
                   reset                     Restore default config files and clear cache
+                  config-dir                Open config directory in file explorer
+                  migrate-config            Find and fix deprecated options in config
                   help                      Print this message
 
                 {Format.underline}Options{Format.reset}:
                 -v, --version  Print version
+                -c, --config   Print config directory path
                 -h, --help     Print this message
             """)
             )
             sys.exit(0)
 
         elif args.version:
-            from core.utils.utilities import get_architecture
+            from core.utils.system import get_architecture
 
             architecture = get_architecture()
             arch_suffix = f" {architecture}" if architecture else ""
@@ -683,7 +764,7 @@ class CLITaskHandler:
         idle_settings.RestartOnIdle = False
         action = task_def.Actions.Create(0)
         action.Path = EXE_PATH
-        action.WorkingDirectory = INSTALLATION_PATH
+        action.WorkingDirectory = SCRIPT_PATH
         try:
             root_folder.RegisterTaskDefinition("YASB Reborn", task_def, 6, None, None, 3, None)
             print("Task YASB Reborn created successfully.")
@@ -714,8 +795,8 @@ class CLIChannelHandler:
         """
         import tempfile
 
+        from core.utils.system import get_architecture
         from core.utils.update_service import get_update_service
-        from core.utils.utilities import get_architecture
 
         update_service = get_update_service()
         current_channel = update_service._current_channel
@@ -820,8 +901,8 @@ class CLIUpdateHandler:
         """Check for updates and install if available using centralized update service."""
         import tempfile
 
+        from core.utils.system import get_architecture
         from core.utils.update_service import get_update_service
-        from core.utils.utilities import get_architecture
 
         architecture = get_architecture()
         update_service = get_update_service()

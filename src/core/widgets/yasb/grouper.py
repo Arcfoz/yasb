@@ -1,11 +1,9 @@
 import logging
 from typing import Any
 
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QPushButton
 
-from core.config import get_config
-from core.utils.utilities import add_shadow
 from core.utils.widget_builder import WidgetBuilder
 from core.validation.widgets.yasb.grouper import GrouperWidgetConfig
 from core.widgets.base import BaseWidget
@@ -18,10 +16,10 @@ class GrouperWidget(BaseWidget):
     _listener_threads: dict[type, Any] = {}
     _listener_refcounts: dict[type, int] = {}
 
-    def __init__(self, config: GrouperWidgetConfig):
+    def __init__(self, config: GrouperWidgetConfig, widget_configs: dict | None = None):
         super().__init__(class_name=config.class_name)
         self.config = config
-        self._container_shadow = self.config.container_shadow
+        self._widget_configs = widget_configs or {}
         self._hide_empty = self.config.hide_empty
         # Use collapse_options structure
         self._collapse_options = self.config.collapse_options
@@ -39,7 +37,6 @@ class GrouperWidget(BaseWidget):
         self._widget_container = QFrame()
         self._widget_container.setLayout(self._widget_container_layout)
         self._widget_container.setProperty("class", "container")
-        add_shadow(self._widget_container, self._container_shadow.model_dump())
 
         self._collapse_button = None
         if self._collapsed:
@@ -49,7 +46,6 @@ class GrouperWidget(BaseWidget):
             self._collapsed_icon = self._collapse_options.collapsed_label
             self._collapse_button.setText(self._collapsed_icon)
             self._collapse_button.setFlat(True)
-            self._collapse_button.setCursor(Qt.CursorShape.PointingHandCursor)
 
             if self._collapse_options.label_position.lower() == "left":
                 self._widget_container_layout.addWidget(self._collapse_button)
@@ -67,10 +63,7 @@ class GrouperWidget(BaseWidget):
 
     def _create_child_widgets(self):
         try:
-            config = get_config()
-            widets_config = config.widgets if config else {}
-
-            widget_builder = WidgetBuilder(widets_config)
+            widget_builder = WidgetBuilder(self._widget_configs)
 
             for widget_name in self._widgets_list:
                 child_widget = None
@@ -118,9 +111,9 @@ class GrouperWidget(BaseWidget):
 
                         self._widget_container_layout.addWidget(child_widget)
                     else:
-                        logging.warning(f"GrouperWidget failed to create child widget '{widget_name}'")
+                        logging.warning("GrouperWidget failed to create child widget '%s'", widget_name)
                 except Exception as e:
-                    logging.error(f"GrouperWidget error creating child widget '{widget_name}': {e}")
+                    logging.error("GrouperWidget error creating child widget '%s': %s", widget_name, e)
                 if self._hide_empty and child_widget:
                     try:
                         child_widget.installEventFilter(self)
@@ -132,7 +125,7 @@ class GrouperWidget(BaseWidget):
                         )
             widget_builder.raise_alerts_if_errors_present()
         except Exception as e:
-            logging.error(f"GrouperWidget error initializing child widgets: {e}")
+            logging.error("GrouperWidget error initializing child widgets: %s", e)
 
     def _propagate_bar_context(self) -> None:
         """Propagate bar context to existing child widgets."""

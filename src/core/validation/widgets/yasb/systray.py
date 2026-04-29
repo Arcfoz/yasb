@@ -1,6 +1,6 @@
 from pydantic import Field
 
-from core.validation.widgets.base_model import CustomBaseModel, PaddingConfig, ShadowConfig
+from core.validation.widgets.base_model import CustomBaseModel
 
 
 class SystrayPopupConfig(CustomBaseModel):
@@ -32,9 +32,3 @@ class SystrayWidgetConfig(CustomBaseModel):
     hide_icons: list[str] = []
     tooltip: bool = True
     use_hook: bool = False
-    container_padding: PaddingConfig = PaddingConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
-    unpinned_shadow: ShadowConfig = ShadowConfig()
-    pinned_shadow: ShadowConfig = ShadowConfig()
-    unpinned_vis_btn_shadow: ShadowConfig = ShadowConfig()
-    btn_shadow: ShadowConfig = ShadowConfig()

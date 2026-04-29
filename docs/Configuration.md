@@ -1,12 +1,8 @@
 # Config file
 
 The configuration uses the YAML file format and is named `config` or `config.yaml`.
-
 Valid directories for this file are `C:/Users/{username}/.config/yasb/` or ENV variable `YASB_CONFIG_HOME` if set.
-A good starting point is the [default config](https://github.com/amnweb/yasb/blob/main/src/config.yaml).
-
 All valid options for the widgets are listed on the widgets page.
-
 
 # Environment Variables Support
 
@@ -21,7 +17,6 @@ This allows you to securely store sensitive information (such as API keys or tok
 
 **Example `.env` file:**
 ```
-YASB_FONT_ENGINE=native
 YASB_WEATHER_API_KEY=your_api_key_here
 YASB_GITHUB_TOKEN=your_github_token_here
 YASB_WEATHER_LOCATION=your_location_here
@@ -37,6 +32,9 @@ Valid options are:
 - `native`: Uses the DirectWrite font rendering engine.
 - `gdi`: Uses the GDI font rendering engine.
 - `freetype`: Uses the FreeType font rendering engine.
+
+> **Note:**
+> The default font engine is GDI, changing the font engine may cause different font rendering quality. You can experiment with different engines to see which one works best for you. Font names can be different between engines, example: gdi `"font-family: 'JetBrainsMono NFP';"` may need to be changed to `"font-family: 'JetBrainsMono Nerd Font Propo'"` for DirectWrite.
 
 
 ## Status Bar Root Configuration
@@ -106,6 +104,8 @@ Valid options are:
 | `round_corners_type` | string | `'normal'` | The type of rounded corners, can be `normal` or `small`. Note: This is only effective on Windows 11. |
 | `border_color`    | string  | `'system'`   | The border color for the bar, can be `None`, `"system"`, or a hex color (e.g., `"#ff0000"`). Note: This is only effective on Windows 11. |
 
+> **Note:**
+> Rounded corners, border color and rounded corners type are only effective on Windows 11.
 
 ### Window Flags Configuration
 | Option            | Type    | Default       | Description |

@@ -1,9 +1,6 @@
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -19,7 +16,6 @@ class ActiveLayoutIconsConfig(CustomBaseModel):
     right_main_vertical_stack: str = "=||"
     monocle: str = "[M]"
     maximized: str = "[X]"
-    maximised: str = "[X]"  # deprecated, use "maximized" instead
     floating: str = "><>"
     paused: str = "[P]"
     tiling: str = "[T]"
@@ -64,9 +60,5 @@ class ActiveLayoutConfig(CustomBaseModel):
     ]
     layout_icons: ActiveLayoutIconsConfig = ActiveLayoutIconsConfig()
     layout_menu: ActiveLayoutMenuConfig = ActiveLayoutMenuConfig()
-    container_padding: PaddingConfig = PaddingConfig()
-    animation: AnimationConfig = AnimationConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
     keybindings: list[KeybindingConfig] = []
     callbacks: ActiveLayoutCallbacksConfig = ActiveLayoutCallbacksConfig()

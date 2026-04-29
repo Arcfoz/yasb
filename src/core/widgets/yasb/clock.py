@@ -8,8 +8,8 @@ from datetime import date, datetime, timedelta
 from itertools import cycle
 from zoneinfo import ZoneInfo, available_timezones
 
-from PyQt6.QtCore import QDate, QEasingCurve, QLocale, QPoint, QPropertyAnimation, Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QDate, QLocale, QPoint, Qt, QTimer
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QAbstractSpinBox,
     QApplication,
@@ -30,10 +30,9 @@ from PyQt6.QtWidgets import (
 
 from core.config import HOME_CONFIGURATION_DIR
 from core.utils.tooltip import set_tooltip
-from core.utils.utilities import PopupWidget, add_shadow, build_widget_label, refresh_widget_style
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.win32.utilities import apply_qmenu_style
-from core.utils.win32.win32_accent import Blur
+from core.utils.utilities import PopupWidget, refresh_widget_style
+from core.utils.win32.backdrop import enable_blur
+from core.utils.win32.utils import apply_qmenu_style
 from core.validation.widgets.yasb.clock import ClockConfig
 from core.widgets.base import BaseWidget
 from settings import SCRIPT_PATH
@@ -172,10 +171,10 @@ class ClockWidgetSharedState:
         """Load alarms from disk into shared state, if the file exists."""
         try:
             if os.path.exists(self._alarms_file):
-                with open(self._alarms_file, "r", encoding="utf-8") as f:
+                with open(self._alarms_file, encoding="utf-8") as f:
                     self._alarms = json.load(f)
         except Exception as e:
-            logging.error(f"Error loading alarms: {e}")
+            logging.error("Error loading alarms: %s", e)
             self._alarms = []
 
     def save_alarms(self):
@@ -190,7 +189,7 @@ class ClockWidgetSharedState:
             with open(self._alarms_file, "w", encoding="utf-8") as f:
                 f.write(json_str)
         except Exception as e:
-            logging.error(f"Error saving alarms: {e}")
+            logging.error("Error saving alarms: %s", e)
 
 
 class FormattedSpinBox(QSpinBox):
@@ -259,7 +258,6 @@ class CustomCalendar(QCalendarWidget):
         self.setGridVisible(False)
         self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.setNavigationBarVisible(False)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAutoFillBackground(False)
         self._holidays = set()
         self._current_year = None
@@ -270,6 +268,10 @@ class CustomCalendar(QCalendarWidget):
         table_view = self.findChild(QTableView)
         if table_view:
             table_view.setProperty("class", "calendar-table")
+            palette = table_view.palette()
+            palette.setColor(QPalette.ColorRole.Highlight, QColor(0, 0, 0, 0))
+            palette.setColor(QPalette.ColorRole.HighlightedText, palette.color(QPalette.ColorRole.Text))
+            table_view.setPalette(palette)
 
         if parent and parent._locale:
             qt_locale = QLocale(parent._locale)
@@ -344,12 +346,9 @@ class ClockWidget(BaseWidget):
         self._timezones = cycle(self._timezones_list)
         self._active_datetime_format_str = ""
         self._active_datetime_format = None
-        self._animation = self.config.animation
         self._label_content = self.config.label
         self._calendar = self.config.calendar
         self._label_alt_content = self.config.label_alt
-        self._label_shadow = self.config.label_shadow
-        self._container_shadow = self.config.container_shadow
         self._icons = self.config.icons or {}
         self._alarm_icons = self.config.alarm_icons
         self._current_hour = None
@@ -358,23 +357,13 @@ class ClockWidget(BaseWidget):
         self._timer_visible = False
         self._country_code = self.config.calendar.country_code or self.get_country_code()
         self._subdivision = self.config.calendar.subdivision
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(self, self._label_content, self._label_alt_content, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self._label_content, self._label_alt_content)
 
         self._timer_label = QLabel()
         self._timer_label.setProperty("class", "label timer")
         self._timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._timer_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._timer_label.hide()
-        add_shadow(self._timer_label, self.config.label_shadow.model_dump())
         self._widget_container_layout.addWidget(self._timer_label)
 
         self.register_callback("toggle_label", self._toggle_label)
@@ -416,7 +405,8 @@ class ClockWidget(BaseWidget):
                 valid_timezones.append(tz)
             else:
                 logging.warning(
-                    f"Invalid timezone '{tz}' ignored. Use format like 'America/New_York' or 'Europe/London'"
+                    "Invalid timezone '%s' ignored. Use format like 'America/New_York' or 'Europe/London'",
+                    tz,
                 )
 
         if not valid_timezones:
@@ -426,15 +416,10 @@ class ClockWidget(BaseWidget):
         return valid_timezones
 
     def _toggle_calendar(self):
-        """Show the calendar popup, optionally using an animation."""
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self.show_calendar()
 
     def _toggle_label(self):
         """Toggle between primary and alternate label layouts."""
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
@@ -609,7 +594,7 @@ class ClockWidget(BaseWidget):
 
                 set_tooltip(self, tooltip_text)
             except Exception as e:
-                logging.error(f"Error updating tooltip for timezone '{self._active_tz}': {e}")
+                logging.error("Error updating tooltip for timezone '%s': %s", self._active_tz, e)
 
     def _next_timezone(self):
         """Rotate to the next timezone in the configured list."""
@@ -622,7 +607,7 @@ class ClockWidget(BaseWidget):
             if self._tooltip and hasattr(self, "_tooltip_filter"):
                 self._tooltip_filter.show_tooltip()
         except Exception as e:
-            logging.error(f"Error switching to timezone '{self._active_tz}': {e}")
+            logging.error("Error switching to timezone '%s': %s", self._active_tz, e)
             self._active_tz = None
             self._update_tooltip()
             self._update_label()
@@ -797,11 +782,9 @@ class ClockWidget(BaseWidget):
 
             alarm_btn = QPushButton("Set Alarm")
             alarm_btn.setProperty("class", "button alarm small")
-            alarm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
             timer_btn = QPushButton("Set Timer")
             timer_btn.setProperty("class", "button timer small")
-            timer_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
             def on_alarm_clicked():
                 try:
@@ -1119,7 +1102,6 @@ class ClockWidget(BaseWidget):
             btn = QPushButton(day)
             btn.setCheckable(True)
             btn.setProperty("class", "button day")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             if is_edit_mode:
                 btn.setChecked(i in alarm.get("days", []))
             day_buttons.append(btn)
@@ -1164,7 +1146,6 @@ class ClockWidget(BaseWidget):
         if is_edit_mode:
             enabled_button = QPushButton()
             enabled_button.setCheckable(True)
-            enabled_button.setCursor(Qt.CursorShape.PointingHandCursor)
             is_enabled = alarm.get("enabled", True)
             enabled_button.setChecked(is_enabled)
             enabled_button.setText("Enabled" if is_enabled else "Disabled")
@@ -1183,7 +1164,6 @@ class ClockWidget(BaseWidget):
 
         for label, key in quick_options:
             btn = QPushButton(label)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setCheckable(True)
             btn.setProperty("class", "button quick-option")
             quick_group.addButton(btn)
@@ -1215,7 +1195,6 @@ class ClockWidget(BaseWidget):
         if is_edit_mode:
             delete_btn = QPushButton("Delete")
             delete_btn.setProperty("class", "button delete")
-            delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
             def delete_alarm():
                 if alarm in self._shared_state._alarms:
@@ -1232,10 +1211,8 @@ class ClockWidget(BaseWidget):
 
         save_btn = QPushButton("Save")
         save_btn.setProperty("class", "button save")
-        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setProperty("class", "button cancel")
-        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
         buttons.extend([save_btn, cancel_btn])
 
@@ -1312,7 +1289,7 @@ class ClockWidget(BaseWidget):
     def _play_sound(self, loop_duration_ms=0):
         """Play the configured notification sound; loop if loop_duration_ms>0."""
         if not os.path.exists(NOTIFICATION_SOUND):
-            logging.warning(f"Notification sound file not found: {NOTIFICATION_SOUND}")
+            logging.warning("Notification sound file not found: %s", NOTIFICATION_SOUND)
             return
 
         try:
@@ -1322,7 +1299,7 @@ class ClockWidget(BaseWidget):
             else:
                 winsound.PlaySound(NOTIFICATION_SOUND, winsound.SND_FILENAME | winsound.SND_ASYNC)
         except Exception as e:
-            logging.error(f"Failed to play notification sound: {e}")
+            logging.error("Failed to play notification sound: %s", e)
 
     def _stop_alarm_sound(self):
         """Stop any playing notification sound (winsound)."""
@@ -1341,7 +1318,7 @@ class ClockWidget(BaseWidget):
         win.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         try:
             hwnd = int(win.winId())
-            Blur(hwnd, Acrylic=False, DarkMode=True, RoundCorners=True, RoundCornersType="normal", BorderColor="None")
+            enable_blur(hwnd, DarkMode=True, RoundCorners=True, RoundCornersType="normal", BorderColor="None")
         except Exception:
             pass
         win.setProperty("class", "active-alarm-window")
@@ -1357,30 +1334,6 @@ class ClockWidget(BaseWidget):
         title_icon.setProperty("class", "alarm-title-icon")
         title_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        def create_shake_animation():
-            animation = QPropertyAnimation(title_icon, b"pos")
-            animation.setDuration(1000)
-            animation.setLoopCount(16)
-
-            def start_shake():
-                original_pos = title_icon.pos()
-                animation.setKeyValueAt(0, original_pos)
-                animation.setKeyValueAt(0.1, QPoint(original_pos.x() - 10, original_pos.y()))
-                animation.setKeyValueAt(0.2, QPoint(original_pos.x() + 10, original_pos.y()))
-                animation.setKeyValueAt(0.3, QPoint(original_pos.x() - 10, original_pos.y()))
-                animation.setKeyValueAt(0.4, QPoint(original_pos.x() + 10, original_pos.y()))
-                animation.setKeyValueAt(0.5, QPoint(original_pos.x() - 5, original_pos.y()))
-                animation.setKeyValueAt(0.6, QPoint(original_pos.x() + 5, original_pos.y()))
-                animation.setKeyValueAt(0.7, QPoint(original_pos.x() - 5, original_pos.y()))
-                animation.setKeyValueAt(0.8, QPoint(original_pos.x() + 5, original_pos.y()))
-                animation.setKeyValueAt(0.9, original_pos)
-                animation.setKeyValueAt(1.0, original_pos)
-                animation.setEasingCurve(QEasingCurve.Type.InOutSine)
-                animation.start()
-
-            QTimer.singleShot(10, start_shake)
-            return animation
-
         title_text = alarm.get("title") or "Alarm"
         title = QLabel(title_text)
         title.setWordWrap(True)
@@ -1389,8 +1342,6 @@ class ClockWidget(BaseWidget):
         title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         layout.addWidget(title_icon)
         layout.addWidget(title)
-
-        win._icon_animation = create_shake_animation()
 
         try:
             now = datetime.now(ZoneInfo(self._active_tz)) if self._active_tz else datetime.now().astimezone()
@@ -1415,7 +1366,6 @@ class ClockWidget(BaseWidget):
         for label, snooze_minutes in buttons_config:
             btn = QPushButton(label)
             btn.setProperty("class", "button")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_layout.addWidget(btn)
             alarm_buttons.append((btn, snooze_minutes))
 
@@ -1489,7 +1439,6 @@ class ClockWidget(BaseWidget):
 
         for label, mins in quick_options:
             btn = QPushButton(label)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setCheckable(True)
             btn.setProperty("class", "button quick-option")
             quick_group.addButton(btn)
@@ -1506,10 +1455,8 @@ class ClockWidget(BaseWidget):
         # Create action buttons
         start_btn = QPushButton("Start")
         start_btn.setProperty("class", "button start")
-        start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setProperty("class", "button cancel")
-        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
         def start_timer():
             total_seconds = minutes_spin.value() * 60 + seconds_spin.value()

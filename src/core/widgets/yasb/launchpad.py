@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import time
 from functools import lru_cache
-from typing import Any, Dict, List
+from typing import Any
 
 from PyQt6.QtCore import (
     QAbstractAnimation,
@@ -20,7 +20,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QAction, QColor, QCursor, QDrag, QIcon, QKeySequence, QPainter, QPixmap, QShortcut, QWheelEvent
+from PyQt6.QtGui import QAction, QColor, QDrag, QIcon, QKeySequence, QPainter, QPixmap, QShortcut, QWheelEvent
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
     QApplication,
@@ -41,12 +41,11 @@ from PyQt6.QtWidgets import (
 
 from core.config import HOME_CONFIGURATION_DIR
 from core.utils.shell_utils import shell_open
-from core.utils.utilities import add_shadow, build_widget_label, refresh_widget_style
-from core.utils.widgets.animation_manager import AnimationManager
+from core.utils.utilities import refresh_widget_style
 from core.utils.win32.app_loader import AppListLoader, ShortcutResolver
+from core.utils.win32.backdrop import enable_blur
 from core.utils.win32.icon_extractor import IconExtractorUtil, UrlExtractorUtil
-from core.utils.win32.utilities import apply_qmenu_style, get_foreground_hwnd, set_foreground_hwnd
-from core.utils.win32.win32_accent import Blur
+from core.utils.win32.utils import apply_qmenu_style, get_foreground_hwnd, set_foreground_hwnd
 from core.utils.win32.window_actions import force_foreground_focus
 from core.validation.widgets.yasb.launchpad import LaunchpadConfig
 from core.widgets.base import BaseWidget
@@ -81,7 +80,7 @@ def load_and_scale_icon(icon_path: str, size: int, dpr=1.0) -> QPixmap:
             scaled_pixmap.setDevicePixelRatio(dpr)
             return scaled_pixmap
     except Exception as e:
-        logging.error(f"Failed to load icon {icon_path}: {e}")
+        logging.error("Failed to load icon %s: %s", icon_path, e)
         return QPixmap()
 
 
@@ -108,7 +107,7 @@ class IconLoadWorker(QThread):
                     if not pixmap.isNull() and not self._should_stop:
                         self.icon_loaded.emit(icon_path, pixmap)
                 except Exception as e:
-                    logging.error(f"Failed to load icon in worker: {e}")
+                    logging.error("Failed to load icon in worker: %s", e)
 
 
 class UrlFetchWorker(QThread):
@@ -277,14 +276,12 @@ class AppDialog(QDialog):
         button_layout.setContentsMargins(0, 0, 0, 0)
 
         self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.cancel_btn.setProperty("class", "button")
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_btn)
 
         self.add_btn = QPushButton("Save" if self.is_edit_mode else "Add")
         self.add_btn.setProperty("class", f"button {'save' if self.is_edit_mode else 'add'}")
-        self.add_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.add_btn.clicked.connect(self.accept)
         button_layout.addWidget(self.add_btn)
         layout.addWidget(button_container)
@@ -454,7 +451,7 @@ class AppDialog(QDialog):
                 shutil.copy2(icon_path, new_icon_path)
                 icon_path = new_icon_path
             except Exception as e:
-                logging.error(f"Failed to copy icon: {e}")
+                logging.error("Failed to copy icon: %s", e)
 
         path = self.path_edit.text().strip()
 
@@ -588,14 +585,8 @@ class LaunchpadWidget(BaseWidget):
         self._window = config.window.model_dump()
         self._window_style = config.window_style.model_dump()
         self._window_animation = config.window_animation.model_dump()
-        self._animation = config.animation.model_dump()
         self._shortcuts = config.shortcuts.model_dump()
-        self._padding = config.container_padding.model_dump()
         self._group_apps = config.group_apps
-        self._label_shadow = config.label_shadow.model_dump()
-        self._container_shadow = config.container_shadow.model_dump()
-        self._app_title_shadow = config.app_title_shadow.model_dump()
-        self._app_icon_shadow = config.app_icon_shadow.model_dump()
         self._dpr = 1.0
         # Setup directories and files
         self._launchpad_dir = os.path.join(HOME_CONFIGURATION_DIR, "launchpad")
@@ -617,16 +608,8 @@ class LaunchpadWidget(BaseWidget):
         self._num_drag_items = 0
         self._previous_hwnd = 0
 
-        # Create a container widget for layout
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self._container_shadow)
-        self.widget_layout.addWidget(self._widget_container)
-        build_widget_label(self, self._label, None, self._label_shadow)
+        self._init_container()
+        self.build_widget_label(self._label, None)
 
         # Register callbacks
         self.register_callback("toggle_launchpad", self._toggle_launchpad)
@@ -635,8 +618,6 @@ class LaunchpadWidget(BaseWidget):
         self.callback_middle = self.config.callbacks.on_middle
 
     def _toggle_launchpad(self):
-        if self._animation["enabled"]:
-            AnimationManager.animate(self, self._animation["type"], self._animation["duration"])
         if self._launchpad_popup and self._launchpad_popup.isVisible():
             self._hide_launchpad()
         else:
@@ -666,14 +647,13 @@ class LaunchpadWidget(BaseWidget):
         if self._launchpad_popup and not self._is_closing:
             self._fade_out_popup()
 
-    def _create_app_icon_widget(self, app_data: Dict[str, Any]) -> QFrame:
+    def _create_app_icon_widget(self, app_data: dict[str, Any]) -> QFrame:
         """Create an app icon widget"""
         app_icon = QFrame()
         if app_data.get("type") == "url":
             app_icon.setProperty("class", "app-icon url")
         else:
             app_icon.setProperty("class", "app-icon")
-        app_icon.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         app_icon.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         app_icon.setAcceptDrops(True)
         app_icon.app_data = app_data
@@ -689,13 +669,11 @@ class LaunchpadWidget(BaseWidget):
         icon_label = QLabel()
         icon_label.setFixedSize(self._app_icon_size, self._app_icon_size)
         icon_label.setProperty("class", "icon")
-        add_shadow(icon_label, self._app_icon_shadow)
 
         title_label = QLabel(app_data.get("title", "Unknown"))
         title_label.setProperty("class", "title")
         title_label.setWordWrap(True)
         title_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        add_shadow(title_label, self._app_title_shadow)
 
         container_layout.addWidget(
             icon_label, stretch=1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
@@ -827,7 +805,7 @@ class LaunchpadWidget(BaseWidget):
                 app_icon.icon_label.setText("")
                 app_icon._icon_loaded = True
         except Exception as e:
-            logging.error(f"Failed to load icon {icon_path}: {e}")
+            logging.error("Failed to load icon %s: %s", icon_path, e)
             app_icon.icon_label.setText("")
             app_icon._icon_loaded = True
 
@@ -856,11 +834,11 @@ class LaunchpadWidget(BaseWidget):
                         self._populate_grid(current_search)
 
         except Exception as e:
-            logging.error(f"Failed to reorder apps: {e}")
+            logging.error("Failed to reorder apps: %s", e)
 
     _SHELL_APPS_FOLDER = "explorer.exe shell:AppsFolder\\"
 
-    def _launch_app(self, app_data: Dict[str, Any]):
+    def _launch_app(self, app_data: dict[str, Any]):
         path = app_data.get("path", "")
         if path:
             try:
@@ -875,9 +853,9 @@ class LaunchpadWidget(BaseWidget):
                     shell_open(parts[0], parameters=parts[1] if len(parts) > 1 else None)
                 self._hide_launchpad()
             except Exception as e:
-                logging.error(f"Failed to launch app {app_data.get('title', 'Unknown')}: {e}")
+                logging.error("Failed to launch app %s: %s", app_data.get("title", "Unknown"), e)
 
-    def _launch_app_elevated(self, app_data: Dict[str, Any]):
+    def _launch_app_elevated(self, app_data: dict[str, Any]):
         """Launch an app with administrator privileges (UAC prompt)."""
         path = app_data.get("path", "")
         if path:
@@ -893,7 +871,7 @@ class LaunchpadWidget(BaseWidget):
                     shell_open(parts[0], verb="runas", parameters=parts[1] if len(parts) > 1 else None)
                 self._hide_launchpad()
             except Exception as e:
-                logging.error(f"Failed to launch app elevated {app_data.get('title', 'Unknown')}: {e}")
+                logging.error("Failed to launch app elevated %s: %s", app_data.get("title", "Unknown"), e)
 
     def _show_context_menu(self, pos, app_data=None, parent_widget=None, event=None):
         """
@@ -1194,7 +1172,7 @@ class LaunchpadWidget(BaseWidget):
 
         try:
             language, codepage = win32api.GetFileVersionInfo(path, "\\VarFileInfo\\Translation")[0]
-            stringFileInfo = "\\StringFileInfo\\%04X%04X\\%s" % (language, codepage, "FileDescription")
+            stringFileInfo = f"\\StringFileInfo\\{language:04X}{codepage:04X}\\FileDescription"
             description = win32api.GetFileVersionInfo(path, stringFileInfo)
         except:
             description = "unknown"
@@ -1355,11 +1333,9 @@ class LaunchpadWidget(BaseWidget):
         self._focus_icon(new_index)
 
     def _popup_enter_event(self, event):
-        self.popup.setCursor(Qt.CursorShape.ArrowCursor)
         QWidget.enterEvent(self.popup, event)
 
     def _popup_leave_event(self, event):
-        self.popup.setCursor(Qt.CursorShape.ArrowCursor)
         QWidget.leaveEvent(self.popup, event)
 
     def _scroll_to_icon(self, icon):
@@ -1388,7 +1364,7 @@ class LaunchpadWidget(BaseWidget):
             try:
                 self._apply_blur()
             except Exception as e:
-                logging.warning(f"Failed to apply blur effect: {e}")
+                logging.warning("Failed to apply blur effect: %s", e)
         self._fade_in_popup()
         QTimer.singleShot(0, self._focus_first_icon)
 
@@ -1444,7 +1420,7 @@ class LaunchpadWidget(BaseWidget):
         else:
             self._populate_flat_grid(filtered_apps)
 
-    def _populate_flat_grid(self, filtered_apps: List[Dict[str, Any]]):
+    def _populate_flat_grid(self, filtered_apps: list[dict[str, Any]]):
         """Populate grid without grouping (original behavior)"""
         grid_layout = self._launchpad_popup.grid_layout
 
@@ -1488,7 +1464,7 @@ class LaunchpadWidget(BaseWidget):
         if icon_requests:
             self._start_background_loading(icon_requests)
 
-    def _populate_grouped_grid(self, filtered_apps: List[Dict[str, Any]]):
+    def _populate_grouped_grid(self, filtered_apps: list[dict[str, Any]]):
         """Populate grid with icons for group"""
         grid_layout = self._launchpad_popup.grid_layout
 
@@ -1557,11 +1533,10 @@ class LaunchpadWidget(BaseWidget):
         if icon_requests:
             self._start_background_loading(icon_requests)
 
-    def _create_group_widget(self, group_name: str, apps: List[Dict[str, Any]]):
+    def _create_group_widget(self, group_name: str, apps: list[dict[str, Any]]):
         group_widget = QFrame()
         group_widget.setProperty("class", "group-icon")
         group_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        group_widget.setCursor(Qt.CursorShape.PointingHandCursor)
         group_widget.is_group = True
         group_widget.group_name = group_name
         group_widget.apps_in_group = apps
@@ -1619,7 +1594,6 @@ class LaunchpadWidget(BaseWidget):
         title_label.setProperty("class", "title")
         title_label.setWordWrap(True)
         title_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        add_shadow(title_label, self._app_title_shadow)
 
         # Add title with same alignment as regular apps
         container_layout.addWidget(title_label, stretch=2, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -1639,7 +1613,7 @@ class LaunchpadWidget(BaseWidget):
 
         return group_widget
 
-    def _open_group(self, group_name: str, apps: List[Dict[str, Any]]):
+    def _open_group(self, group_name: str, apps: list[dict[str, Any]]):
         self._current_group = group_name
 
         # Hide search input and show back button
@@ -1650,7 +1624,6 @@ class LaunchpadWidget(BaseWidget):
         if not hasattr(self._launchpad_popup, "back_button"):
             back_button = QPushButton()
             back_button.setProperty("class", "group-back-button")
-            back_button.setCursor(Qt.CursorShape.PointingHandCursor)
             back_button.setFixedHeight(40)
             back_button.clicked.connect(self._close_group)
             self._launchpad_popup.search_container.layout().insertWidget(0, back_button)
@@ -1735,7 +1708,7 @@ class LaunchpadWidget(BaseWidget):
                 else:
                     self._populate_grid()
 
-    def _set_app_group(self, app_data: Dict[str, Any], group: str):
+    def _set_app_group(self, app_data: dict[str, Any], group: str):
         """Set group for an app"""
         apps = self._load_apps()
         for app in apps:
@@ -1778,16 +1751,15 @@ class LaunchpadWidget(BaseWidget):
     def _apply_blur(self):
         if self._launchpad_popup:
             try:
-                Blur(
+                enable_blur(
                     self._launchpad_popup.winId(),
-                    Acrylic=False,
                     DarkMode=True if not self._window["fullscreen"] else False,
                     RoundCorners=self._window_style["round_corners"] if not self._window["fullscreen"] else False,
                     RoundCornersType=self._window_style["round_corners_type"],
                     BorderColor=self._window_style["border_color"] if not self._window["fullscreen"] else None,
                 )
             except Exception as e:
-                logging.warning(f"Failed to apply blur effect: {e}")
+                logging.warning("Failed to apply blur effect: %s", e)
 
     def _cleanup_popup(self):
         if self._launchpad_popup:
@@ -1906,7 +1878,7 @@ class LaunchpadWidget(BaseWidget):
                 else:
                     self._populate_grid()
 
-    def _edit_app(self, app_data: Dict[str, Any]):
+    def _edit_app(self, app_data: dict[str, Any]):
         all_groups = self._get_all_groups()
         dialog = AppDialog(
             self._launchpad_popup if self._launchpad_popup else None, app_data, self._icons_dir, all_groups
@@ -1973,7 +1945,7 @@ class LaunchpadWidget(BaseWidget):
 
         dialog.exec()
 
-    def _delete_app(self, app_data: Dict[str, Any]):
+    def _delete_app(self, app_data: dict[str, Any]):
         """Delete an app with modern styled confirmation dialog"""
         dialog = QDialog(self._launchpad_popup if self._launchpad_popup else None)
         dialog.setWindowTitle("Delete App")
@@ -2073,26 +2045,26 @@ class LaunchpadWidget(BaseWidget):
                     try:
                         os.remove(unused_icon_path)
                     except Exception as e:
-                        logging.warning(f"Failed to remove unused icon {filename}: {e}")
+                        logging.warning("Failed to remove unused icon %s: %s", filename, e)
 
                     for cache_key in list(_ICON_CACHE.keys()):
                         if filename in cache_key:
                             del _ICON_CACHE[cache_key]
 
         except Exception as e:
-            logging.error(f"Failed to cleanup unused icons: {e}")
+            logging.error("Failed to cleanup unused icons: %s", e)
 
-    def _load_apps(self) -> List[Dict[str, Any]]:
+    def _load_apps(self) -> list[dict[str, Any]]:
         try:
             if os.path.exists(self._data_file):
-                with open(self._data_file, "r", encoding="utf-8") as f:
+                with open(self._data_file, encoding="utf-8") as f:
                     apps = json.load(f)
                 return apps
         except Exception as e:
-            logging.error(f"Failed to load apps from {self._data_file}: {e}")
+            logging.error("Failed to load apps from %s: %s", self._data_file, e)
         return []
 
-    def _get_all_groups(self) -> List[str]:
+    def _get_all_groups(self) -> list[str]:
         """Get all unique groups from apps"""
         apps = self._load_apps()
         groups = set()
@@ -2125,11 +2097,11 @@ class LaunchpadWidget(BaseWidget):
                 self._populate_grid(current_search)
 
         except Exception as e:
-            logging.error(f"Failed to order apps by {order_type}: {e}")
+            logging.error("Failed to order apps by %s: %s", order_type, e)
 
-    def _save_apps(self, apps: List[Dict[str, Any]]):
+    def _save_apps(self, apps: list[dict[str, Any]]):
         try:
             with open(self._data_file, "w", encoding="utf-8") as f:
                 json.dump(apps, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            logging.error(f"Failed to save apps to {self._data_file}: {e}")
+            logging.error("Failed to save apps to %s: %s", self._data_file, e)

@@ -9,15 +9,13 @@
 | `token`             | string  | `""` | GitHub personal access token. Leave empty to use OAuth sign-in, or set to `"env"` to read from `YASB_GITHUB_TOKEN`.   |
 | `max_notification`  | integer | `30` | The maximum number of notifications to display in the menu.                                                     |
 | `notification_dot`  | dict    | `{'enabled': true, 'corner': 'bottom_left', 'color': 'red', 'margin': [1, 1]}` | A dictionary specifying the notification dot settings for the widget. |
+| `hide_empty`        | boolean | `false` | Whether to hide the widget when there are no unread notifications.                                              |
 | `only_unread`       | boolean | `false` | Whether to show only unread notifications.                                                                      |
 | `show_comment_count`| boolean | `false` | Whether to request and display aggregated comment counts for supported notifications.                           |
 | `reason_filters`    | list    | `[]` | Optional list of notification reasons to include (e.g. `['mention', 'assign']`). Empty list returns all reasons. |
 | `max_field_size`    | integer | `100` | The maximum number of characters in the title before truncation.                                                |
 | `menu`              | dict    | `{'blur': true, 'round_corners': true, 'round_corners_type': 'normal', 'border_color': 'System', 'alignment': 'right', 'direction': 'down', 'offset_top': 6, 'offset_left': 0, 'show_categories': true, 'categories_order': []}` | Menu settings for the widget.                                                                                   |
 | `icons`             | dict    | `{'issue': '\uf41b', 'issue_closed': '\uf41d', 'pull_request': '\uea64', 'pull_request_closed': '\uebda', 'pull_request_merged': '\uf17f', 'pull_request_draft': '\uebdb', 'release': '\uea84', 'discussion': '\uf442', 'discussion_answered': '\uf4c0', 'checksuite': '\uf418', 'default': '\uea84', 'github_logo': '\uea84', 'comment': '\uf41f'}` | Icons for different types of notifications in the menu.                                                         |
-| `animation`         | dict    | `{'enabled': true, 'type': 'fadeInOut', 'duration': 200}` | Animation settings for the widget. |
-| `container_shadow`  | dict    | `None` | Container shadow options.                                                                                       |
-| `label_shadow`      | dict    | `None` | Label shadow options.                                                                                           |
 
 ```yaml
 github:
@@ -46,11 +44,6 @@ github:
       direction: "down"
       show_categories: false
       categories_order: ["PullRequest", "Issue", "CheckSuite", "Release", "Discussion"]
-    label_shadow:
-      enabled: True
-      color: "black"
-      radius: 3
-      offset: [ 1, 1 ]
 ```
 ## Description of Options
 
@@ -79,6 +72,7 @@ github:
   - **corner:** Set the corner where the dot should appear.
   - **color:** Set the color of the notification dot. Can be hex or string color.
   - **margin:** Set the x, y margin for the notification dot.
+- **hide_empty:** Whether to hide the widget when there are no unread notifications.
 - **only_unread:** Whether to show only unread notifications.
 - **show_comment_count:** When enabled, the widget performs a single batched GraphQL request to fetch comment totals for issues, pull requests, and discussions. Pull request counts include review threads. The comment count is displayed alongside each notification item.
 - **reason_filters:** Optional list of notification reasons to include. Leave empty to show all reasons. Supported values include `assign`, `author`, `comment`, `ci_activity`, `invitation`, `manual`, `mention`, `review_requested`, `security_alert`, `state_change`, `subscribed`, and `team_mention`.
@@ -96,10 +90,6 @@ github:
   - **categories_order:** Optional list that defines the preferred order of categories when `show_categories` is enabled. Values are case-insensitive and must match GitHub notification types (for example `PullRequest`, `Issue`). Any categories not listed appear after the configured ones. Available categories include `PullRequest`, `Issue`, `CheckSuite`, `Release`, and `Discussion`.
   
   When `show_categories` is enabled, the first and last notification card within each section gains the `.first` and `.last` classes. If categories are hidden, those classes are applied to the first and last items in the flat list instead. Use them to fine-tune spacing or borders.
-
-- **animation:** A dictionary specifying the animation settings for the widget. It contains three keys: `enabled`, `type`, and `duration`. The `type` can be `fadeInOut` and the `duration` is the animation duration in milliseconds.
-- **container_shadow:** Container shadow options.
-- **label_shadow:** Label shadow options.
 
 ## Authentication
 

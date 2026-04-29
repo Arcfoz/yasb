@@ -3,12 +3,9 @@ from typing import Literal
 from pydantic import Field
 
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CallbacksConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -62,10 +59,6 @@ class MemoryConfig(CustomBaseModel):
     )
     hide_decimal: bool = False
     memory_thresholds: MemoryThresholdsConfig = MemoryThresholdsConfig()
-    animation: AnimationConfig = AnimationConfig()
-    container_padding: PaddingConfig = PaddingConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
     progress_bar: ProgressBarConfig = ProgressBarConfig()
     menu: MemoryMenuConfig = MemoryMenuConfig()
     keybindings: list[KeybindingConfig] = []

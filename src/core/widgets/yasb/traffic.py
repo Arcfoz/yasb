@@ -5,19 +5,17 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from core.utils.tooltip import set_tooltip
-from core.utils.utilities import PopupWidget, add_shadow, build_widget_label, refresh_widget_style
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.traffic.connection_monitor import InternetChecker
-from core.utils.widgets.traffic.traffic_manager import TrafficDataManager
+from core.utils.utilities import PopupWidget, refresh_widget_style
 from core.validation.widgets.yasb.traffic import TrafficWidgetConfig
 from core.widgets.base import BaseWidget
-from settings import DEBUG
+from core.widgets.services.traffic.connection_monitor import InternetChecker
+from core.widgets.services.traffic.traffic_manager import TrafficDataManager
 
 
 class TrafficWidget(BaseWidget):
     validation_schema = TrafficWidgetConfig
 
-    _instances_by_interface: dict[str, list["TrafficWidget"]] = {}
+    _instances_by_interface: dict[str, list[TrafficWidget]] = {}
     _shared_timers: dict[str, QTimer] = {}
     _shared_data: dict[str, dict] = {}
 
@@ -37,22 +35,10 @@ class TrafficWidget(BaseWidget):
             self.config.interface
         )
 
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-
-        self.widget_layout.addWidget(self._widget_container)
-        build_widget_label(
-            self,
+        self._init_container()
+        self.build_widget_label(
             self.config.label,
             self.config.label_alt,
-            self.config.label_shadow.model_dump(),
         )
 
         self._initialize_instance_counters()
@@ -70,11 +56,10 @@ class TrafficWidget(BaseWidget):
             self.internet_checker.connection_changed.connect(self._on_connection_changed)
 
             self._is_internet_connected = True
-            if DEBUG:
-                logging.info(f"Internet checker initialized for interface {self.config.interface}")
+            logging.debug("Internet checker initialized for interface %s", self.config.interface)
 
         except Exception as e:
-            logging.error(f"Failed to initialize InternetChecker for interface {self.config.interface}: {e}")
+            logging.error("Failed to initialize InternetChecker for interface %s: %s", self.config.interface, e)
             self._is_internet_connected = False  # Default to disconnected if checker fails
 
         self.register_callback("toggle_label", self._toggle_label)
@@ -111,9 +96,9 @@ class TrafficWidget(BaseWidget):
                     self.bytes_sent = initial_io.bytes_sent
                     self.bytes_recv = initial_io.bytes_recv
                 else:
-                    logging.warning(f"Could not get initial IO counters for interface {self.config.interface}")
+                    logging.warning("Could not get initial IO counters for interface %s", self.config.interface)
             except Exception as e:
-                logging.error(f"Error initializing instance counters: {e}")
+                logging.error("Error initializing instance counters: %s", e)
 
         QTimer.singleShot(100, get_initial_counters)
 
@@ -143,10 +128,10 @@ class TrafficWidget(BaseWidget):
                     cls._instances_by_interface[interface].remove(instance)
 
         except Exception as e:
-            logging.error(f"Error updating interface data for {interface}: {e}")
+            logging.error("Error updating interface data for %s: %s", interface, e)
 
     @classmethod
-    def _get_shared_net_data(cls, interface: str, reference_instance: "TrafficWidget"):
+    def _get_shared_net_data(cls, interface: str, reference_instance: TrafficWidget):
         """Get network data for a specific interface using a reference instance"""
         try:
             # Use the data manager to calculate everything
@@ -177,7 +162,7 @@ class TrafficWidget(BaseWidget):
             return net_data
 
         except Exception as e:
-            logging.error(f"Error getting network data for interface {interface}: {e}")
+            logging.error("Error getting network data for interface %s: %s", interface, e)
             # Return default values if an error occurs
             return {
                 "upload_speed": "0 Kbps",
@@ -299,8 +284,6 @@ class TrafficWidget(BaseWidget):
                 pass
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)  # type: ignore
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:  # type: ignore
             widget.setVisible(not self._show_alt_label)
@@ -387,7 +370,6 @@ class TrafficWidget(BaseWidget):
         reset_button = QPushButton("Reset All")
         reset_button.setProperty("class", "reset-button")
         set_tooltip(reset_button, "Reset all traffic data")
-        reset_button.setCursor(Qt.CursorShape.PointingHandCursor)
         reset_button.clicked.connect(self._reset_traffic_data)
         header_layout.addWidget(reset_button)
 
@@ -570,7 +552,7 @@ class TrafficWidget(BaseWidget):
             except RuntimeError:
                 pass
             except Exception as e:
-                logging.error(f"Error updating menu content: {e}")
+                logging.error("Error updating menu content: %s", e)
 
     def _reset_traffic_data(self):
         """Reset all traffic data to zero"""
@@ -592,7 +574,7 @@ class TrafficWidget(BaseWidget):
                 self._update_menu_content()
 
         except Exception as e:
-            logging.error(f"Error resetting traffic data: {e}")
+            logging.error("Error resetting traffic data: %s", e)
 
     def _is_menu_visible(self):
         """Check if the popup menu is visible"""

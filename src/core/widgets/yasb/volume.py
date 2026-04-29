@@ -7,21 +7,18 @@ from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRect, Qt
 from PyQt6.QtGui import QImage, QPixmap, QWheelEvent
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
+from core.utils.qobject import is_valid_qobject
 from core.utils.tooltip import CustomToolTip, set_tooltip
 from core.utils.utilities import (
     PopupWidget,
-    add_shadow,
     build_progress_widget,
-    build_widget_label,
-    is_valid_qobject,
     refresh_widget_style,
 )
-from core.utils.widgets.animation_manager import AnimationManager
-from core.utils.widgets.volume.service import AudioOutputService
 from core.utils.win32.app_icons import get_process_icon
-from core.utils.win32.utilities import get_app_name_from_pid
+from core.utils.win32.utils import get_app_name_from_pid
 from core.validation.widgets.yasb.volume import VolumeConfig
 from core.widgets.base import BaseWidget
+from core.widgets.services.volume.service import AudioOutputService
 
 
 class VolumeWidget(BaseWidget):
@@ -37,16 +34,8 @@ class VolumeWidget(BaseWidget):
 
         self.progress_widget = build_progress_widget(self, self.config.progress_bar.model_dump())
 
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        add_shadow(self._widget_container, self.config.container_shadow.model_dump())
-        self.widget_layout.addWidget(self._widget_container)
-
-        build_widget_label(self, self.config.label, self.config.label_alt, self.config.label_shadow.model_dump())
+        self._init_container()
+        self.build_widget_label(self.config.label, self.config.label_alt)
 
         self.register_callback("toggle_label", self._toggle_label)
         self.register_callback("update_label", self._update_label)
@@ -78,13 +67,11 @@ class VolumeWidget(BaseWidget):
                     if speakers:
                         self.show_volume_menu()
                 except Exception as e:
-                    logging.debug(f"Cannot show volume menu after device change: {e}")
+                    logging.debug("Cannot show volume menu after device change: %s", e)
 
         self._update_label()
 
     def _toggle_volume_menu(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self.show_volume_menu()
 
     def _on_slider_released(self):
@@ -97,7 +84,7 @@ class VolumeWidget(BaseWidget):
             try:
                 ctypes.windll.user32.MessageBeep(0)
             except Exception as e:
-                logging.debug(f"Failed to play volume sound: {e}")
+                logging.debug("Failed to play volume sound: %s", e)
 
     def _show_slider_tooltip(self, slider, value):
         """Show tooltip above slider handle during drag."""
@@ -132,7 +119,7 @@ class VolumeWidget(BaseWidget):
                 if hasattr(self, "volume_slider"):
                     self._show_slider_tooltip(self.volume_slider, value)
             except Exception as e:
-                logging.error(f"Failed to set volume: {e}")
+                logging.error("Failed to set volume: %s", e)
 
     def _set_app_volume(self, volume_interface, value, slider=None):
         """Set volume for a specific application"""
@@ -142,7 +129,7 @@ class VolumeWidget(BaseWidget):
             if slider:
                 self._show_slider_tooltip(slider, value)
         except Exception as e:
-            logging.error(f"Failed to set application volume: {e}")
+            logging.error("Failed to set application volume: %s", e)
 
     def _toggle_app_mute(self, volume_interface, icon_label, slider, pid):
         """Toggle mute state for a specific application"""
@@ -153,7 +140,7 @@ class VolumeWidget(BaseWidget):
             # Update icon and slider state
             self._update_app_mute_state(icon_label, slider, new_mute, pid)
         except Exception as e:
-            logging.error(f"Failed to toggle application mute: {e}")
+            logging.error("Failed to toggle application mute: %s", e)
 
     def _update_app_mute_state(self, icon_label, slider, is_muted, pid):
         """Update the visual state of an app's icon and slider based on mute status"""
@@ -166,7 +153,7 @@ class VolumeWidget(BaseWidget):
             # Enable/disable the slider
             slider.setEnabled(not is_muted)
         except Exception as e:
-            logging.error(f"Failed to update app mute state: {e}")
+            logging.error("Failed to update app mute state: %s", e)
 
     def _toggle_app_volumes(self):
         """Toggle the visibility of application volume sliders with animation"""
@@ -284,7 +271,7 @@ class VolumeWidget(BaseWidget):
             pixmap.setDevicePixelRatio(self._dpi)
             return pixmap
         except Exception as e:
-            logging.debug(f"Failed to get icon pixmap for PID {pid}: {e}")
+            logging.debug("Failed to get icon pixmap for PID %s: %s", pid, e)
 
         return None
 
@@ -396,7 +383,6 @@ class VolumeWidget(BaseWidget):
             if audio_sessions:
                 self.app_toggle_btn = QPushButton(self.config.audio_menu.app_icons.toggle_down)
                 self.app_toggle_btn.setProperty("class", "toggle-apps")
-                self.app_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 self.app_toggle_btn.clicked.connect(lambda: self._toggle_app_volumes())
                 if self.config.tooltip:
                     set_tooltip(self.app_toggle_btn, "Expand application volumes")
@@ -443,7 +429,6 @@ class VolumeWidget(BaseWidget):
                     icon_frame = QFrame()
                     icon_frame.setContentsMargins(0, 0, 0, 0)
                     icon_frame.setProperty("class", "app-icon-container")
-                    icon_frame.setCursor(Qt.CursorShape.PointingHandCursor)
                     if self.config.tooltip:
                         set_tooltip(icon_frame, display_name, delay=800, position="top")
 
@@ -528,8 +513,6 @@ class VolumeWidget(BaseWidget):
             self._toggle_app_volumes()
 
     def _toggle_label(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         self._show_alt_label = not self._show_alt_label
         for widget in self._widgets:
             widget.setVisible(not self._show_alt_label)
@@ -558,7 +541,7 @@ class VolumeWidget(BaseWidget):
                 )
 
             except Exception as e:
-                logging.error(f"Failed to get volume info: {e}")
+                logging.error("Failed to get volume info: %s", e)
                 mute_status, icon_volume, level_volume = None, "", "No Device"
 
         label_options = {"{icon}": icon_volume, "{level}": level_volume}
@@ -637,7 +620,7 @@ class VolumeWidget(BaseWidget):
             self._update_slider_value()
             self._update_label()
         except Exception as e:
-            logging.error(f"Failed to increase volume: {e}")
+            logging.error("Failed to increase volume: %s", e)
 
     def _decrease_volume(self):
         if self.volume is None:
@@ -651,7 +634,7 @@ class VolumeWidget(BaseWidget):
             self._update_slider_value()
             self._update_label()
         except Exception as e:
-            logging.error(f"Failed to decrease volume: {e}")
+            logging.error("Failed to decrease volume: %s", e)
 
     def wheelEvent(self, event: QWheelEvent):
         if self.volume is None:
@@ -662,8 +645,6 @@ class VolumeWidget(BaseWidget):
             self._decrease_volume()
 
     def toggle_mute(self):
-        if self.config.animation.enabled:
-            AnimationManager.animate(self, self.config.animation.type, self.config.animation.duration)
         if self.volume is None:
             return
         try:
@@ -671,4 +652,4 @@ class VolumeWidget(BaseWidget):
             self.volume.SetMute(not current_mute_status, None)
             self._update_label()
         except Exception as e:
-            logging.error(f"Failed to toggle mute: {e}")
+            logging.error("Failed to toggle mute: %s", e)

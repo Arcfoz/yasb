@@ -1,12 +1,9 @@
 from typing import Literal
 
 from core.validation.widgets.base_model import (
-    AnimationConfig,
     CallbacksConfig,
     CustomBaseModel,
     KeybindingConfig,
-    PaddingConfig,
-    ShadowConfig,
 )
 
 
@@ -40,9 +37,5 @@ class KomorebiControlWidgetConfig(CustomBaseModel):
     config_path: str | None = None
     show_version: bool = True
     komorebi_menu: KomorebiMenuConfig = KomorebiMenuConfig()
-    animation: AnimationConfig = AnimationConfig()
-    container_padding: PaddingConfig = PaddingConfig()
-    label_shadow: ShadowConfig = ShadowConfig()
-    container_shadow: ShadowConfig = ShadowConfig()
     keybindings: list[KeybindingConfig] = []
     callbacks: KomorebiControlCallbacksConfig = KomorebiControlCallbacksConfig()

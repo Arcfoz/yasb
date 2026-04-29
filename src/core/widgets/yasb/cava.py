@@ -8,18 +8,18 @@ import threading
 
 from PyQt6.QtCore import QPointF, QRectF, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath
-from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel
+from PyQt6.QtWidgets import QApplication, QFrame, QLabel
 
-from core.utils.utilities import app_data_path
+from core.utils.system import app_data_path
 from core.validation.widgets.yasb.cava import CavaConfig
 from core.widgets.base import BaseWidget
 
 
 class CavaBar(QFrame):
     _dpr: float | None
-    _cava_widget: "CavaWidget"
+    _cava_widget: CavaWidget
 
-    def __init__(self, cava_widget: "CavaWidget") -> None:
+    def __init__(self, cava_widget: CavaWidget) -> None:
         super().__init__()
         self._dpr = None
         self._cava_widget = cava_widget
@@ -408,13 +408,7 @@ class CavaWidget(BaseWidget):
         self.colors = []
 
         # Construct container layout
-        self._widget_container_layout = QHBoxLayout()
-        self._widget_container_layout.setSpacing(0)
-        self._widget_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._widget_container = QFrame()
-        self._widget_container.setLayout(self._widget_container_layout)
-        self._widget_container.setProperty("class", "widget-container")
-        self.widget_layout.addWidget(self._widget_container)
+        self._init_container()
 
         # Check if cava is available
         if shutil.which("cava") is None:
@@ -465,7 +459,7 @@ class CavaWidget(BaseWidget):
                 self._hide_cava_widget = True
                 self.show()
         except Exception as e:
-            logging.error(f"Error reloading cava: {e}")
+            logging.error("Error reloading cava: %s", e)
 
     def stop_cava(self) -> None:
         self._stop_cava = True
@@ -489,10 +483,10 @@ class CavaWidget(BaseWidget):
                 try:
                     c = QColor(color_str)
                     if not c.isValid():
-                        logging.error(f"Invalid gradient color specified: {color_str}")
+                        logging.error("Invalid gradient color specified: %s", color_str)
                     self.colors.append(c)
                 except Exception as e:
-                    logging.error(f"Error setting gradient color '{color_str}': {e}")
+                    logging.error("Error setting gradient color '%s': %s", color_str, e)
 
     def on_samples_updated(self, new_samples: list) -> None:
         try:
@@ -509,7 +503,7 @@ class CavaWidget(BaseWidget):
                         self._hide_timer.start()
                 self._bar_frame.update()
             except Exception as e:
-                logging.error(f"Error updating cava widget: {e}")
+                logging.error("Error updating cava widget: %s", e)
 
     def hide_bar_frame(self) -> None:
         self.hide()
@@ -531,6 +525,9 @@ class CavaWidget(BaseWidget):
         lines.append(f"lower_cutoff_freq = {self.config.lower_cutoff_freq}")
         lines.append(f"higher_cutoff_freq = {self.config.higher_cutoff_freq}")
         lines.append(f"framerate = {self.config.framerate}")
+        lines.append("")
+        lines.append("[input]")
+        lines.append(f"source = {self.config.source}")
         lines.append("")
         lines.append("[output]")
         lines.append("method = raw")
@@ -592,11 +589,11 @@ class CavaWidget(BaseWidget):
                         samples = [val / bytenorm for val in struct.unpack(fmt, data)]
                         self.samplesUpdated.emit(samples)
                     except Exception as e:
-                        logging.error(f"Error reading cava data: {e}")
+                        logging.error("Error reading cava data: %s", e)
                         break
 
             except Exception as e:
-                logging.error(f"Error starting cava process: {e}")
+                logging.error("Error starting cava process: %s", e)
             finally:
                 # Clean up config file
                 if cava_config_path and os.path.exists(cava_config_path):
