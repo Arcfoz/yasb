@@ -39,8 +39,9 @@ class GlazewmWorkspaceButton(QPushButton):
         client: GlazewmClient,
         config: GlazewmWorkspacesConfig,
         display_name: str | None = None,
+        parent_widget: QWidget | None = None,
     ):
-        super().__init__()
+        super().__init__(parent=parent_widget)
         self.setProperty("class", "ws-btn")
         self.glazewm_client = client
         self.config = config
@@ -137,7 +138,7 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
         display_name: str | None = None,
         windows: list[Window] | None = None,
     ):
-        super().__init__()
+        super().__init__(parent=parent_widget)
         self.setProperty("class", "ws-btn")
         self.glazewm_client = client
         self.workspace_name = workspace_name
@@ -157,7 +158,7 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
         self.button_layout.setContentsMargins(0, 0, 0, 0)
         self.button_layout.setSpacing(0)
 
-        self.text_label = QLabel(self.workspace_name)
+        self.text_label = QLabel(self.workspace_name, self)
         self.text_label.setProperty("class", "label")
         self.text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.button_layout.addWidget(self.text_label)
@@ -320,7 +321,8 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
         # Remove extra QLabel widgets if there are more than needed
         for extra_label in self.icon_labels[len(icons_list) :]:
             self.button_layout.removeWidget(extra_label)
-            extra_label.setParent(None)
+            extra_label.hide()
+            extra_label.deleteLater()
         self.icon_labels = self.icon_labels[: len(icons_list)]
 
         # Add or update icons
@@ -328,7 +330,7 @@ class GlazewmWorkspaceButtonWithIcons(QFrame):
             if index < len(self.icon_labels):
                 self.icon_labels[index].setPixmap(icon)
             else:
-                icon_label = QLabel()
+                icon_label = QLabel(self)
                 icon_label.setProperty("class", f"icon icon-{index + 1}")
                 icon_label.setPixmap(icon)
                 self.button_layout.addWidget(icon_label)
@@ -353,12 +355,12 @@ class GlazewmWorkspacesWidget(BaseWidget):
         self.workspace_container_layout.setSpacing(0)
         self.workspace_container_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.workspace_container = QFrame()
+        self.workspace_container = QFrame(self)
         self.workspace_container.setLayout(self.workspace_container_layout)
         self.workspace_container.setProperty("class", "widget-container")
         self.workspace_container.setVisible(False)
 
-        self.offline_text = QLabel(self.config.offline_label)
+        self.offline_text = QLabel(self.config.offline_label, self)
         self.offline_text.setProperty("class", "offline-status")
 
         self.widget_layout.addWidget(self.offline_text)
@@ -428,6 +430,7 @@ class GlazewmWorkspacesWidget(BaseWidget):
                         self.glazewm_client,
                         config=self.config,
                         display_name=workspace.display_name,
+                        parent_widget=self,
                     )
 
             btn.monitor_exclusive = self.config.monitor_exclusive

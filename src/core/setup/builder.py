@@ -62,7 +62,7 @@ def build_config(selected_groups: list[str] | None = None, bar_overrides: dict |
             bar["screens"] = bar_overrides["screens"]
         if "bar_style" in bar_overrides:
             if bar_overrides["bar_style"] == "floating":
-                bar["alignment"]["center"] = True
+                bar["alignment"]["align"] = "center"
                 bar["padding"] = {"top": 4, "left": 4, "bottom": 0, "right": 4}
                 bar["blur_effect"]["round_corners"] = True
                 bar["blur_effect"]["round_corners_type"] = "normal"

@@ -52,14 +52,16 @@ class WorkspaceButton(QPushButton):
         self.clicked.connect(self.activate_workspace)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, self.sizePolicy().verticalPolicy())
         self.hide()
+        self.update_and_redraw(self.status)
 
     def update_visible_buttons(self):
-        visible_buttons = [btn for btn in self.parent_widget._workspace_buttons if btn.isVisible()]
+        visible_buttons = [btn for btn in self.parent_widget._workspace_buttons if not btn.isHidden()]
         for index, button in enumerate(visible_buttons):
             current_class = button.property("class")
             new_class = " ".join([cls for cls in current_class.split() if not cls.startswith("button-")])
             new_class = f"{new_class} button-{index + 1}"
             button.setProperty("class", new_class)
+            refresh_widget_style(button)
 
     def update_and_redraw(self, status: WorkspaceStatus):
         self.status = status
@@ -115,18 +117,20 @@ class WorkspaceButtonWithIcons(QFrame):
         self.icon_labels = []
         self.hide()
         self.update_icons()
+        self.update_and_redraw(self.status)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             self.activate_workspace()
 
     def update_visible_buttons(self):
-        visible_buttons = [btn for btn in self.parent_widget._workspace_buttons if btn.isVisible()]
+        visible_buttons = [btn for btn in self.parent_widget._workspace_buttons if not btn.isHidden()]
         for index, button in enumerate(visible_buttons):
             current_class = button.property("class")
             new_class = " ".join([cls for cls in current_class.split() if not cls.startswith("button-")])
             new_class = f"{new_class} button-{index + 1}"
             button.setProperty("class", new_class)
+            refresh_widget_style(button)
 
     def update_and_redraw(self, status: WorkspaceStatus):
         self.status = status
@@ -398,7 +402,7 @@ class WorkspaceWidget(BaseWidget):
 
     def _update_komorebi_state(self, komorebi_state: dict) -> bool:
         try:
-            self._screen_hwnd = get_monitor_hwnd(int(QWidget.winId(self)))
+            self._screen_hwnd = self.monitor_hwnd or get_monitor_hwnd(int(QWidget.winId(self)))
             self._komorebi_state = komorebi_state
             if self._komorebi_state:
                 self._komorebi_screen = self._komorebic.get_screen_by_hwnd(self._komorebi_state, self._screen_hwnd)
@@ -465,9 +469,9 @@ class WorkspaceWidget(BaseWidget):
         if self.config.hide_empty_workspaces and workspace_status == WORKSPACE_STATUS_EMPTY:
             workspace_btn.hide()
         else:
-            workspace_btn.show()
             if workspace_btn.status != workspace_status:
                 workspace_btn.update_and_redraw(workspace_status)
+            workspace_btn.show()
             workspace_btn.update_visible_buttons()
         self._get_workspace_layer(workspace_index)
 
@@ -489,7 +493,6 @@ class WorkspaceWidget(BaseWidget):
         workspace_btn.default_label = default_label
         workspace_btn.active_label = active_label
         workspace_btn.populated_label = populated_label
-        # Keep current status, only update displayed text.
         workspace_btn.update_and_redraw(workspace_btn.status)
 
     def _add_or_update_buttons(self) -> None:
@@ -504,9 +507,9 @@ class WorkspaceWidget(BaseWidget):
 
         if buttons_added:
             self._workspace_buttons.sort(key=lambda btn: btn.workspace_index)
-            self._clear_container_layout()
-            for workspace_btn in self._workspace_buttons:
-                self._workspace_container_layout.addWidget(workspace_btn)
+            for i, workspace_btn in enumerate(self._workspace_buttons):
+                if self._workspace_container_layout.indexOf(workspace_btn) != i:
+                    self._workspace_container_layout.insertWidget(i, workspace_btn)
                 self._update_button(workspace_btn)
 
     def _get_workspace_label(self, workspace_index):
@@ -519,8 +522,13 @@ class WorkspaceWidget(BaseWidget):
             ws_raw_name = workspace.get("name") if isinstance(workspace, dict) else None
         except Exception:
             ws_raw_name = None
+        try:
+            ws_name = ws_raw_name or self.config.label_default_name.format(
+                index=ws_index, monitor_index=ws_monitor_index
+            )
+        except Exception:
+            ws_name = str(ws_index)
 
-        ws_name = ws_raw_name or self.config.label_default_name.format(index=ws_index, monitor_index=ws_monitor_index)
         default_label = self.config.label_workspace_btn.format(
             name=ws_name, index=ws_index, monitor_index=ws_monitor_index
         )

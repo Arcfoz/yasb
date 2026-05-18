@@ -16,10 +16,12 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QFontMetrics,
+    QHideEvent,
     QPainter,
     QPaintEvent,
     QResizeEvent,
     QScreen,
+    QShowEvent,
     QStaticText,
     QTransform,
 )
@@ -525,7 +527,9 @@ class ScrollingLabel(QLabel):
 
         self._scroll_timer = QTimer(self)
         self._scroll_timer.timeout.connect(self._scroll_text)
-        self._scroll_timer.start(self._update_interval)
+        if not self._scrolling_needed:
+            self._set_idle_offset()
+        self._sync_scroll_timer()
 
     def _ease(self, offset: int, max_offset: int, slope: int = 20, pos: float = 0.8, min_value: float = 0.5) -> float:
         """
@@ -536,6 +540,26 @@ class ScrollingLabel(QLabel):
         """
         x = abs(2 * (offset / max_offset) - 1 if max_offset else 0)
         return (1 + math.tanh(-slope * (x - pos))) * (1 - min_value) / 2 + min_value
+
+    def _sync_scroll_timer(self) -> None:
+        if not hasattr(self, "_scroll_timer"):
+            return
+
+        if self._scrolling_needed and self.isVisible():
+            if not self._scroll_timer.isActive():
+                self._scroll_timer.start(self._update_interval)
+        else:
+            if self._scroll_timer.isActive():
+                self._scroll_timer.stop()
+            if self._style == ScrollingLabel.Style.BOUNCE_EASE:
+                self._scroll_timer.setInterval(self._update_interval)
+
+    def _set_idle_offset(self) -> None:
+        label_width = self.width() - self._margin.left() - self._margin.right()
+        if self._style in {ScrollingLabel.Style.BOUNCE, ScrollingLabel.Style.BOUNCE_EASE}:
+            self._offset = (self._text_width - label_width) // 2  # Center the text
+        else:
+            self._offset = 0  # Reset to left-aligned
 
     @override
     def setText(self, a0: str | None):
@@ -597,42 +621,45 @@ class ScrollingLabel(QLabel):
     def _scroll_text(self):
         """Update the offset based on the state calculated in _build_text_and_metrics()"""
         if not self._scrolling_needed:
-            label_width = self.width() - self._margin.left() - self._margin.right()
-            if self._style in {ScrollingLabel.Style.BOUNCE, ScrollingLabel.Style.BOUNCE_EASE}:
-                self._offset = (self._text_width - label_width) // 2  # Center the text
-            else:
-                self._offset = 0  # Reset to left-aligned
+            self._set_idle_offset()
+            self._sync_scroll_timer()
+            if self.isVisible():
+                self.update()
+            return
 
-            # For bounce-ease, reset interval when not scrolling
+        if not self.isVisible():
+            self._sync_scroll_timer()
+            return
+
+        if self._style == ScrollingLabel.Style.SCROLL_LEFT:
+            self._offset = (self._offset + 1) % self._text_width
+        elif self._style == ScrollingLabel.Style.SCROLL_RIGHT:
+            self._offset -= 1
+            if self._offset <= -self._text_width:
+                self._offset = 0
+        elif self._style in {ScrollingLabel.Style.BOUNCE, ScrollingLabel.Style.BOUNCE_EASE}:
+            label_width = self.width() - self._margin.left() - self._margin.right()
+            max_offset = self._text_width - label_width
             if self._style == ScrollingLabel.Style.BOUNCE_EASE:
-                self._scroll_timer.setInterval(self._update_interval)
-        else:  # Scrolling is needed
-            if self._style == ScrollingLabel.Style.SCROLL_LEFT:
-                self._offset += 1
-            elif self._style == ScrollingLabel.Style.SCROLL_RIGHT:
-                self._offset -= 1
-            elif self._style in {ScrollingLabel.Style.BOUNCE, ScrollingLabel.Style.BOUNCE_EASE}:
-                label_width = self.width() - self._margin.left() - self._margin.right()
-                max_offset = self._text_width - label_width
-                if self._style == ScrollingLabel.Style.BOUNCE_EASE:
-                    easing_factor = self._ease(
-                        self._offset,
-                        max_offset,
-                        self._ease_slope,
-                        self._ease_pos,
-                        self._ease_min,
-                    )
-                    new_interval = int(self._update_interval * 1 / easing_factor)
-                    self._scroll_timer.setInterval(new_interval)
-                self._offset += self._bounce_direction
-                if self._offset >= max_offset:
-                    self._offset = max_offset
-                    self._bounce_direction = -1
-                elif self._offset <= 0:
-                    self._offset = 0
-                    self._bounce_direction = 1
-        if self.isVisible():
-            self.update()
+                easing_factor = self._ease(
+                    self._offset,
+                    max_offset,
+                    self._ease_slope,
+                    self._ease_pos,
+                    self._ease_min,
+                )
+                new_interval = int(self._update_interval * 1 / easing_factor)
+                self._scroll_timer.setInterval(new_interval)
+            self._offset += self._bounce_direction
+            if self._offset >= max_offset:
+                self._offset = max_offset
+                self._bounce_direction = -1
+            elif self._offset <= 0:
+                self._offset = 0
+                self._bounce_direction = 1
+
+        self._sync_scroll_timer()
+        self.update()
 
     @override
     def paintEvent(self, a0: QPaintEvent | None):
@@ -687,6 +714,19 @@ class ScrollingLabel(QLabel):
         width = max(1, b_rect.width() + self._margin.left() + self._margin.right())
         height = max(1, b_rect.height() + self._margin.top() + self._margin.bottom())
         return QSize(min(self.maximumWidth(), width), min(self.maximumHeight(), height))
+
+    @override
+    def showEvent(self, a0: QShowEvent | None):
+        super().showEvent(a0)
+        self._sync_scroll_timer()
+
+    @override
+    def hideEvent(self, a0: QHideEvent | None):
+        if self._scroll_timer.isActive():
+            self._scroll_timer.stop()
+        if self._style == ScrollingLabel.Style.BOUNCE_EASE:
+            self._scroll_timer.setInterval(self._update_interval)
+        super().hideEvent(a0)
 
     @override
     def resizeEvent(self, a0: QResizeEvent | None):

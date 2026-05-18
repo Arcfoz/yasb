@@ -22,7 +22,7 @@ ROOT_BAR: dict = {
     "class_name": "yasb-bar",
     "alignment": {
         "position": "top",
-        "center": False,
+        "align": "center",
     },
     "animation": {
         "enabled": True,

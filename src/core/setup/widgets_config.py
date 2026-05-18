@@ -145,7 +145,7 @@ KOMOREBI_WIDGET: dict = {
                     "label_workspace_btn": "{name}",
                     "label_workspace_active_btn": "{name}",
                     "label_workspace_populated_btn": "{name}",
-                    "label_default_name": "{name}",
+                    "label_default_name": "{index}",
                     "label_zero_index": False,
                     "hide_empty_workspaces": False,
                     "hide_if_offline": True,

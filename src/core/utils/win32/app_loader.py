@@ -157,7 +157,7 @@ class AppListLoader(QThread):
                     mark_seen(name)
 
         try:
-            ps_script = "Get-StartApps | ForEach-Object { [PSCustomObject]@{Name=$_.Name;AppID=$_.AppID} } | ConvertTo-Json -Compress"
+            ps_script = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-StartApps | ForEach-Object { [PSCustomObject]@{Name=$_.Name;AppID=$_.AppID} } | ConvertTo-Json -Compress"
             result = subprocess.run(
                 [
                     "powershell",
