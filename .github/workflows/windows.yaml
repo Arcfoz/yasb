@@ -24,14 +24,6 @@ jobs:
             unsigned_msi_name: unsigned-msi-x64
             unsigned_dll_name: unsigned-dll-x64
             dll_file: YASBTrayHook.dll
-          - arch: arm64
-            runner: windows-11-arm
-            python_arch: arm64
-            artifact_suffix: aarch64
-            unsigned_exe_name: unsigned-exes-arm64
-            unsigned_msi_name: unsigned-msi-arm64
-            unsigned_dll_name: unsigned-dll-arm64
-            dll_file: YASBTrayHook_arm64.dll
     runs-on: ${{ matrix.runner }}
     name: Build (${{ matrix.arch }})
     
