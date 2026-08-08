@@ -10,13 +10,15 @@ The YASB CLI is a command line interface that allows you to interact with the YA
 - `stop` - Stop the status bar.
 - `enable-autostart` - Enable autostart for the status bar on system boot.
 - `disable-autostart` - Disable autostart for the status bar on system boot.
+- `enable-crash-dumps` - Save a crash dump file when YASB crashes.
+- `disable-crash-dumps` - Stop saving crash dump files.
 - `reload` - Reload the status bar configuration.
 - `monitor-information` - Show information about connected monitors.
 - `hide-bar` - Hide the status bar.
 - `show-bar` - Show the status bar.
 - `toggle-bar` - Toggle the visibility of the status bar.
 - `update` - Update the application to the latest version.
-- `set-channel` - Set the update channel (stable, dev).
+- `set-channel` - Set the update channel (stable, preview).
 - `migrate-config` - Find and fix deprecated options in your configuration file.
 - `log` - Stream the status bar logs in real-time.
 - `reset` - Restore default config files and clear cache.
@@ -53,6 +55,21 @@ yasbc disable-autostart --task
 ```
 > **Note:**
 > Creating a task scheduler for autostart on Windows requires administrator privileges.
+
+## Crash Dumps
+
+If YASB closes on its own with nothing in the log (a silent crash), Windows records the crash in Event Viewer but does not save a dump file, so there is nothing left to debug afterwards. To tell Windows to keep one, use the following command:
+```bash
+yasbc enable-crash-dumps
+```
+To stop saving crash dumps, use the following command:
+```bash
+yasbc disable-crash-dumps
+```
+Dumps are written to the `dumps` folder inside your configuration directory, and the last 5 are kept. When reporting a crash, attach the newest `.dmp` file together with your `yasb.log`.
+
+> **Note:**
+> Enabling and disabling crash dumps requires administrator privileges. A dump is a snapshot of memory, so it can contain data from your configuration such as API keys or tokens.
 
 ## Show and Hide the Status Bar
 To hide the status bar on all screens, use the following command:
@@ -94,9 +111,9 @@ yasbc reset
 > This will remove all config files and clear cache.
 
 ## Switch Update Channel
-To switch the update channel to dev, use the following command:
+To switch the update channel to preview, use the following command:
 ```bash
-yasbc set-channel dev
+yasbc set-channel preview
 ```
 
 ## Open Configuration Folder

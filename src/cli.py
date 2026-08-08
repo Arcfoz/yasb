@@ -114,6 +114,7 @@ class CLIHandler:
         self.task_handler = CLITaskHandler()
         self.update_handler = CLIUpdateHandler()
         self.channel_handler = CLIChannelHandler()
+        self.crash_dump_handler = CLICrashDumpHandler()
 
     def send_command_to_application(self, command: str):
         """
@@ -285,6 +286,18 @@ class CLIHandler:
         )
 
         subparsers.add_parser(
+            "enable-crash-dumps",
+            help="Enable crash dumps for troubleshooting",
+            add_help=False,
+        )
+
+        subparsers.add_parser(
+            "disable-crash-dumps",
+            help="Disable crash dumps",
+            add_help=False,
+        )
+
+        subparsers.add_parser(
             "monitor-information",
             help="Show information about connected monitors",
             add_help=False,
@@ -335,8 +348,8 @@ class CLIHandler:
         set_channel_parser.add_argument(
             "target_channel",
             type=str,
-            choices=["stable", "dev"],
-            help="Channel to switch to 'stable' for tested releases or 'dev' for latest updates",
+            choices=["stable", "preview"],
+            help="Channel to switch to 'stable' for tested releases or 'preview' for latest updates",
         )
 
         subparsers.add_parser(
@@ -468,6 +481,20 @@ class CLIHandler:
                     self.task_handler.delete_task()
             else:
                 self.disable_startup()
+            sys.exit(0)
+
+        elif args.command == "enable-crash-dumps":
+            if not self.task_handler.is_admin():
+                print("Please run this command as an administrator.")
+            else:
+                self.crash_dump_handler.enable()
+            sys.exit(0)
+
+        elif args.command == "disable-crash-dumps":
+            if not self.task_handler.is_admin():
+                print("Please run this command as an administrator.")
+            else:
+                self.crash_dump_handler.disable()
             sys.exit(0)
 
         elif args.command == "log":
@@ -677,11 +704,13 @@ class CLIHandler:
                   reload                    Reload the application
                   enable-autostart          Enable autostart on system boot
                   disable-autostart         Disable autostart on system boot
+                  enable-crash-dumps        Enable crash dumps for troubleshooting
+                  disable-crash-dumps       Disable crash dumps
                   monitor-information       Show information about connected monitors
                   show-bar                  Show the bar on all or a specific screen
                   hide-bar                  Hide the bar on all or a specific screen
                   toggle-bar                Toggle the bar on all or a specific screen
-                  set-channel               Switch release channels (stable, dev)
+                  set-channel               Switch release channels (stable, preview)
                   update                    Update the application
                   log                       Tail yasb process logs (cancel with Ctrl-C)
                   reset                     Restore default config files and clear cache
@@ -709,6 +738,86 @@ class CLIHandler:
         else:
             print("Unknown command. Use --help for available options.")
             sys.exit(1)
+
+
+class CLICrashDumpHandler:
+    """Turn Windows crash dumps for yasb.exe on or off.
+
+    Windows logs crashes to the Event Viewer but doesn't save a dump file unless
+    you ask it to, so there is usually nothing left to debug after a native crash.
+
+    https://learn.microsoft.com/en-us/windows/win32/wer/collecting-user-mode-dumps
+    """
+
+    PARENT_KEY_PATH = "SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps"
+    KEY_PATH = PARENT_KEY_PATH + "\\yasb.exe"
+    DUMP_FOLDER = os.path.join(DEFAULT_CONFIG_DIRECTORY, "dumps")
+    DUMP_TYPE = 1  # 1 = mini dump, 2 = full dump
+    DUMP_COUNT = 5
+    OWNS_PARENT_VALUE = "YasbCreatedLocalDumps"
+
+    def _parent_key_exists(self) -> bool:
+        try:
+            winreg.CloseKey(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.PARENT_KEY_PATH))
+            return True
+        except OSError:
+            return False
+
+    def enable(self):
+        # An empty LocalDumps key is itself a switch that makes Windows dump every
+        # application, and creating our key creates it too. Remember whether it was
+        # already there so disable() only removes one we made.
+        parent_existed = self._parent_key_exists()
+
+        try:
+            with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, self.KEY_PATH, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, "DumpFolder", 0, winreg.REG_SZ, self.DUMP_FOLDER)
+                winreg.SetValueEx(key, "DumpType", 0, winreg.REG_DWORD, self.DUMP_TYPE)
+                winreg.SetValueEx(key, "DumpCount", 0, winreg.REG_DWORD, self.DUMP_COUNT)
+                if not parent_existed:
+                    winreg.SetValueEx(key, self.OWNS_PARENT_VALUE, 0, winreg.REG_DWORD, 1)
+        except OSError as e:
+            print(f"Failed to enable crash dumps: {e}")
+            return
+
+        try:
+            os.makedirs(self.DUMP_FOLDER, exist_ok=True)
+        except OSError as e:
+            print(f"Warning: could not create the dump directory: {e}")
+
+        print("Crash dumps enabled.")
+        print(f"Dumps will be saved to {self.DUMP_FOLDER}")
+        print(f"The last {self.DUMP_COUNT} are kept. Attach the newest one when reporting a crash.")
+        print("A dump is a snapshot of memory, so it can contain data from your config.")
+
+    def disable(self):
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.KEY_PATH) as key:
+                created_parent = bool(winreg.QueryValueEx(key, self.OWNS_PARENT_VALUE)[0])
+        except OSError:
+            created_parent = False
+
+        try:
+            winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, self.KEY_PATH)
+        except FileNotFoundError:
+            print("Crash dumps are not enabled.")
+            return
+        except OSError as e:
+            print(f"Failed to disable crash dumps: {e}")
+            return
+
+        # Only tear down LocalDumps if we were the ones who created it, and only while
+        # nothing else has moved in since.
+        if created_parent:
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, self.PARENT_KEY_PATH) as key:
+                    subkeys, values, _ = winreg.QueryInfoKey(key)
+                if not subkeys and not values:
+                    winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, self.PARENT_KEY_PATH)
+            except OSError:
+                pass
+
+        print("Crash dumps disabled. Existing dump files were left in place.")
 
 
 class CLITaskHandler:
@@ -791,7 +900,7 @@ class CLIChannelHandler:
         """Switch to a different release channel.
 
         Args:
-            target_channel: Target channel ('stable' or 'dev')
+            target_channel: Target channel ('stable' or 'preview')
         """
         import tempfile
 
@@ -822,9 +931,9 @@ class CLIChannelHandler:
         print("  * You may need to reconfigure some settings after switching")
         print("  * Switching channels will download and install a new version of YASB")
 
-        if target_channel == "dev":
-            print("  * Bugs and instability may be present in dev channel")
-            print("  * Read the changelog: https://github.com/amnweb/yasb/releases/tag/dev")
+        if target_channel == "preview":
+            print("  * Bugs and instability may be present in preview channel")
+            print("  * Read the changelog: https://github.com/amnweb/yasb/releases/tag/preview")
         else:
             print("  * Read the changelog: https://github.com/amnweb/yasb/releases")
 
@@ -844,8 +953,8 @@ class CLIChannelHandler:
 
         try:
             release_info = update_service.check_for_updates(channel=target_channel, skip_version_check=True, timeout=15)
-            if target_channel == "dev":
-                version_display = f"build {release_info.version.replace('dev-', '')}"
+            if target_channel == "preview":
+                version_display = f"build {release_info.version.replace('preview-', '')}"
             else:
                 version_display = f"version {release_info.version}"
             print(f"Found {Format.magenta}{target_channel}{Format.reset} {version_display}")
@@ -929,8 +1038,14 @@ class CLIUpdateHandler:
                 sys.exit(0)
 
             # Update available
-            print(f"Found {Format.cyan}YASB Reborn{Format.reset} Version {release_info.version}")
-            print("Changelog https://github.com/amnweb/yasb/releases/latest")
+            if update_service._current_channel == "preview":
+                print(
+                    f"Found {Format.cyan}YASB Reborn{Format.reset} Preview {release_info.version.replace('preview-', '')}"
+                )
+                print("Changelog https://github.com/amnweb/yasb/releases/tag/preview")
+            else:
+                print(f"Found {Format.cyan}YASB Reborn{Format.reset} Version {release_info.version}")
+                print("Changelog https://github.com/amnweb/yasb/releases/latest")
             # Ask the user if they want to continue with the update
             try:
                 user_input = input("\nDo you want to continue with the update? (Y/n): ").strip().lower()

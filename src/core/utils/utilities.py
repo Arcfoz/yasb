@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import Any, cast, override
 
 from PyQt6.QtCore import (
+    QEasingCurve,
     QEvent,
     QObject,
     QPoint,
@@ -25,7 +26,15 @@ from PyQt6.QtGui import (
     QStaticText,
     QTransform,
 )
-from PyQt6.QtWidgets import QApplication, QDialog, QFrame, QLabel, QMenu, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFrame,
+    QLabel,
+    QMenu,
+    QSizePolicy,
+    QWidget,
+)
 from winrt.windows.data.xml.dom import XmlDocument
 from winrt.windows.ui.notifications import ToastNotification, ToastNotificationManager
 
@@ -128,9 +137,14 @@ class PopupWidget(QWidget):
         _round_corners (bool): Whether to round the corners of the popup.
         _round_corners_type (str): Type of round corners to apply.
         _border_color (str): Color of the border.
+        _dark_mode (bool): Whether the popup is in dark mode.
+        _persistent (bool): Whether the popup widget should persist in memory after being closed instead of being deleted.
+        _pinnable (bool): When True the window uses the Tool flag so it is not auto-dismissed by Qt.
+                          Call set_pinned(True/False) at runtime to toggle pin/drag behaviour.
     Methods:
         setProperty(name, value): Set a property for the popup widget.
         setPosition(alignment, direction, offset_left, offset_top): Position the popup relative to its parent widget.
+        set_pinned(pinned): Toggle the pinned state (drag + ignore outside clicks).
         showEvent(event): Handle the show event for the popup.
         eventFilter(obj, event): Filter events to detect clicks outside the popup.
         hideEvent(event): Handle the hide event for the popup.
@@ -150,11 +164,16 @@ class PopupWidget(QWidget):
         round_corners_type: str = "normal",
         border_color: str = "None",
         dark_mode: bool = False,
+        persistent: bool = False,
+        pinnable: bool = False,
     ):
         super().__init__(parent)
 
+        # Use Tool flag when pinnable so Qt never auto-dismisses the window.
+        # Use Popup flag otherwise for standard auto-dismiss behaviour.
+        window_type = Qt.WindowType.Tool if pinnable else Qt.WindowType.Popup
         self.setWindowFlags(
-            Qt.WindowType.Popup
+            window_type
             | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.NoDropShadowWindowHint
@@ -165,8 +184,12 @@ class PopupWidget(QWidget):
         self._round_corners_type = round_corners_type
         self._border_color = border_color
         self._dark_mode = dark_mode
+        self._persistent = persistent
         self._parent = parent
         self._suspend_close = False
+        self._pinnable = pinnable
+        self._pinned = False
+        self._drag_pos = None
         # Create the inner frame
         self._popup_content = QFrame(self)
 
@@ -226,6 +249,52 @@ class PopupWidget(QWidget):
             global_position = QPoint(x, y)
         self.move(global_position)
 
+    def set_pinned(self, pinned: bool) -> None:
+        """Toggle the pinned state. Only meaningful when pinnable=True.
+        When pinned the window ignores outside clicks and can be dragged.
+        """
+        if not self._pinnable:
+            return
+        self._pinned = pinned
+        if not pinned:
+            self._drag_pos = None
+
+    def mousePressEvent(self, event):
+        if self._pinnable and self._pinned and event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            self._pinnable
+            and self._pinned
+            and self._drag_pos is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._pinnable and self._pinned and event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = None
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def event(self, event):
+        # Tool-type windows (pinnable=True) don't auto-close on WindowDeactivate the way
+        # Popup-type windows do, so we replicate that behaviour here:
+        # close when not pinned, stay open when pinned.
+        if event.type() == QEvent.Type.WindowDeactivate and self._pinnable:
+            if not self._pinned:
+                self.hide_animated()
+            return True
+        return super().event(event)
+
     def _add_separator(self, layout):
         separator = QFrame(self)
         separator.setFrameShape(QFrame.Shape.HLine)
@@ -246,7 +315,8 @@ class PopupWidget(QWidget):
 
             try:
                 super().hide()
-                self.deleteLater()
+                if not self._persistent:
+                    self.deleteLater()
 
             except Exception:
                 pass
@@ -268,6 +338,7 @@ class PopupWidget(QWidget):
 
         self._is_closing = True
 
+        self._fade_animation.setEasingCurve(QEasingCurve.Type.InCubic)
         self._fade_animation.setStartValue(current_opacity)
         self._fade_animation.setEndValue(0.0)
         self._fade_animation.start()
@@ -292,7 +363,8 @@ class PopupWidget(QWidget):
 
         try:
             super().hide()
-            self.deleteLater()
+            if not self._persistent:
+                self.deleteLater()
         except Exception:
             pass
 
@@ -351,6 +423,7 @@ class PopupWidget(QWidget):
         super().showEvent(event)
 
         self.activateWindow()
+        self._fade_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._fade_animation.setStartValue(0.0)
         self._fade_animation.setEndValue(1.0)
         self._fade_animation.start()
@@ -358,7 +431,7 @@ class PopupWidget(QWidget):
     def eventFilter(self, obj, event):
         if not isinstance(obj, QObject):
             return False
-        if self._suspend_close:
+        if self._suspend_close or self._pinned:
             return super().eventFilter(obj, event)
         if event.type() == QEvent.Type.MouseButtonPress:
             global_pos = event.globalPosition().toPoint()
@@ -463,6 +536,44 @@ class ToastNotifier:
         """)
         notification = ToastNotification(xml)
         self.toaster.show(notification)
+
+
+class ElidedLabel(QLabel):
+    """
+    QLabel that automatically elides text with "..." when it doesn't fit,
+    while preserving the original via `text()`.
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None):
+        super().__init__(text, parent)
+        self._text = text
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(0)
+
+    @override
+    def setText(self, text: str) -> None:
+        self._text = text
+        self._update_elided_text()
+
+    @override
+    def text(self) -> str:
+        return self._text
+
+    @override
+    def resizeEvent(self, event: QResizeEvent | None) -> None:
+        super().resizeEvent(event)
+        self._update_elided_text()
+
+    def _update_elided_text(self) -> None:
+        metrics = QFontMetrics(self.font())
+        # Keep a small margin to avoid edge-clipping and layout loops.
+        available_width = max(self.width() - 4, 0)
+        elided = metrics.elidedText(
+            self._text,
+            Qt.TextElideMode.ElideRight,
+            available_width,
+        )
+        super().setText(elided)
 
 
 class ScrollingLabel(QLabel):
