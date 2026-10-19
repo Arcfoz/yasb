@@ -1,8 +1,15 @@
-from PyQt6.QtCore import QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, pyqtProperty
-from PyQt6.QtGui import QColor, QPainter, QPen
+from collections.abc import Callable
+from typing import Any, override
+
+import PyQt6.QtCore as QtCore
+from PyQt6.QtCore import QEasingCurve, QEvent, QParallelAnimationGroup, QPropertyAnimation, Qt
+from PyQt6.QtGui import QColor, QEnterEvent, QPainter, QPaintEvent, QPen
 from PyQt6.QtWidgets import QApplication, QFrame, QWidget
 
 from core.ui.theme import get_tokens, theme_key
+
+# pyqtProperty exists at runtime but is missing from the PyQt6 type stubs
+pyqtProperty: Callable[..., Any] = getattr(QtCore, "pyqtProperty")
 
 _DURATION = 100
 _RADIUS = 4.0
@@ -21,10 +28,17 @@ def _resolve(t: dict[str, str], key: str) -> QColor:
 
 
 class Card(QFrame):
-    """Card with custom-painted background, border, and animated hover/selection."""
+    """Card with custom-painted background, border, and animated hover/selection.
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    Args:
+        parent: Parent widget.
+        hover: Whether the card lights up under the cursor. Leave on for a card the user can
+            click; turn it off for one that is only a container.
+    """
+
+    def __init__(self, parent: QWidget | None = None, hover: bool = True) -> None:
         super().__init__(parent)
+        self._hover = hover
         self._selected = False
         self._theme_key = theme_key()
         self._build_states(get_tokens())
@@ -38,7 +52,9 @@ class Card(QFrame):
             setattr(self, f"_anim_{name}", anim)
             self._anim_group.addAnimation(anim)
 
-        QApplication.instance().paletteChanged.connect(self._on_theme_changed)
+        app = QApplication.instance()
+        if app:
+            app.paletteChanged.connect(self._on_theme_changed)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
     def _build_states(self, t: dict[str, str]) -> None:
         self._states = {
@@ -66,23 +82,23 @@ class Card(QFrame):
         self.update()
 
     # Animated properties
-    @pyqtProperty(QColor)
-    def bg(self) -> QColor:
+    def _get_bg(self) -> QColor:
         return self._bg
 
-    @bg.setter
-    def bg(self, c: QColor) -> None:
+    def _set_bg(self, c: QColor) -> None:
         self._bg = c
         self.update()
 
-    @pyqtProperty(QColor)
-    def border(self) -> QColor:
+    bg: QColor = pyqtProperty(QColor, _get_bg, _set_bg)
+
+    def _get_border(self) -> QColor:
         return self._border
 
-    @border.setter
-    def border(self, c: QColor) -> None:
+    def _set_border(self, c: QColor) -> None:
         self._border = c
         self.update()
+
+    border: QColor = pyqtProperty(QColor, _get_border, _set_border)
 
     def _animate_to(self, state: str) -> None:
         target = self._states.get(state, self._states["normal"])
@@ -109,16 +125,19 @@ class Card(QFrame):
         for label in self.findChildren(TextBlock):
             label.set_color_override(color)
 
-    def enterEvent(self, event) -> None:
-        if not self._selected:
+    @override
+    def enterEvent(self, event: QEnterEvent | None) -> None:
+        if self._hover and not self._selected:
             self._animate_to("hover")
         super().enterEvent(event)
 
-    def leaveEvent(self, event) -> None:
+    @override
+    def leaveEvent(self, a0: QEvent | None) -> None:
         self._animate_to(self._current_state())
-        super().leaveEvent(event)
+        super().leaveEvent(a0)
 
-    def paintEvent(self, _event) -> None:
+    @override
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect().adjusted(1, 1, -1, -1).toRectF()

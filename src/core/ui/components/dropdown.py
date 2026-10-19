@@ -1,25 +1,51 @@
+from collections.abc import Callable
+from typing import Any, override
+
+import PyQt6.QtCore as QtCore
 from PyQt6.QtCore import (
     QEasingCurve,
+    QEvent,
     QParallelAnimationGroup,
     QPoint,
     QPointF,
     QPropertyAnimation,
     QRectF,
     Qt,
-    pyqtProperty,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
-from PyQt6.QtWidgets import QApplication, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QEnterEvent,
+    QFont,
+    QFontMetrics,
+    QLinearGradient,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QPolygonF,
+)
+from PyQt6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QPushButton, QVBoxLayout, QWidget
 
 from core.ui.theme import FONT_FAMILIES, get_tokens, theme_key
 
-_DURATION = 150
+# pyqtProperty exists at runtime but is missing from the PyQt6 type stubs
+pyqtProperty: Callable[..., Any] = getattr(QtCore, "pyqtProperty")
+
+_DURATION = 90
 _RADIUS = 4.0
 _ITEM_HEIGHT = 36
 _INDICATOR_WIDTH = 3
 _INDICATOR_HEIGHT = 16
 _TRANSPARENT = QColor(0, 0, 0, 0)
+_MENU_RADIUS = 8
+_OPEN_MS = 90
+_REVEAL_MS = 200
+_SHADOW_MARGIN = 24
+_SHADOW_BLUR = 28
+_SHADOW_DY = 6
+_SHADOW_ALPHA = 110
 
 # Token keys for trigger states: (bg_key, border_key)
 _TRIGGER_MAP = {
@@ -36,7 +62,7 @@ def _resolve(t: dict[str, str], key: str) -> QColor:
 class _DropDownItem(QWidget):
     clicked = pyqtSignal(str)
 
-    def __init__(self, key: str, label: str, tokens: dict, parent=None) -> None:
+    def __init__(self, key: str, label: str, tokens: dict[str, str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._key = key
         self._label = label
@@ -52,41 +78,28 @@ class _DropDownItem(QWidget):
         font.setPixelSize(14)
         self.setFont(font)
 
-        self._anim = QPropertyAnimation(self, b"bg")
-        self._anim.setDuration(_DURATION)
-        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-
-    @pyqtProperty(QColor)
-    def bg(self) -> QColor:
-        return self._bg
-
-    @bg.setter
-    def bg(self, c: QColor) -> None:
-        self._bg = c
-        self.update()
-
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         self.update()
 
-    def enterEvent(self, event) -> None:
-        self._anim.stop()
-        self._anim.setStartValue(self._bg)
-        self._anim.setEndValue(_resolve(self._tokens, "subtle_fill_secondary"))
-        self._anim.start()
+    @override
+    def enterEvent(self, event: QEnterEvent | None) -> None:
+        self._bg = _resolve(self._tokens, "subtle_fill_secondary")
+        self.update()
         super().enterEvent(event)
 
-    def leaveEvent(self, event) -> None:
-        self._anim.stop()
-        self._anim.setStartValue(self._bg)
-        self._anim.setEndValue(QColor(_TRANSPARENT))
-        self._anim.start()
-        super().leaveEvent(event)
+    @override
+    def leaveEvent(self, a0: QEvent | None) -> None:
+        self._bg = QColor(_TRANSPARENT)
+        self.update()
+        super().leaveEvent(a0)
 
-    def mousePressEvent(self, event) -> None:
+    @override
+    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
         self.clicked.emit(self._key)
 
-    def paintEvent(self, _event) -> None:
+    @override
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect().adjusted(4, 2, -4, -2).toRectF()
@@ -110,68 +123,108 @@ class _DropDownItem(QWidget):
         # Text
         p.setPen(_resolve(self._tokens, "text_primary"))
         p.setFont(self.font())
-        p.drawText(rect.adjusted(20, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._label)
+        p.drawText(rect.adjusted(16, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._label)
         p.end()
-
-
-def _is_transparency_enabled() -> bool:
-    try:
-        import winreg
-
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-        ) as key:
-            value, _ = winreg.QueryValueEx(key, "EnableTransparency")
-            return value == 1
-    except Exception:
-        return False
 
 
 class _DropDownPopup(QWidget):
     itemSelected = pyqtSignal(str)
 
-    def __init__(self, items: list[tuple[str, str]], current: str, tokens: dict, trigger: QWidget) -> None:
+    def __init__(self, items: list[tuple[str, str]], current: str, tokens: dict[str, str], trigger: QWidget) -> None:
         super().__init__(
             trigger, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint | Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setAutoFillBackground(False)
 
-        bg = tokens["dropdown_menu_bg"] if _is_transparency_enabled() else tokens["dropdown_menu_bg_solid"]
+        bg = tokens["dropdown_menu_bg_solid"]
+        self._reveal = 1.0
+        self._menu_top = 0
+        self._selected_index = 0
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        self._container = QWidget(self)
+        self._container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._container.setStyleSheet(f"background-color: {bg}; border-radius: {_MENU_RADIUS}px;")
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(_SHADOW_BLUR)
+        self._shadow.setOffset(0, _SHADOW_DY)
+        self._shadow.setColor(QColor(0, 0, 0, _SHADOW_ALPHA))
+        self._container.setGraphicsEffect(self._shadow)
 
-        container = QWidget(self)
-        container.setStyleSheet(f"background-color: {bg}; border-radius: {int(_RADIUS + 2)}px;")
-        outer.addWidget(container)
-
-        layout = QVBoxLayout(container)
+        layout = QVBoxLayout(self._container)
         layout.setContentsMargins(2, 4, 2, 4)
         layout.setSpacing(0)
 
         for key, label in items:
-            item = _DropDownItem(key, label, tokens, self)
+            item = _DropDownItem(key, label, tokens, self._container)
             item.set_selected(key == current)
             item.clicked.connect(self._on_item_clicked)
             layout.addWidget(item)
 
-        self.setFixedWidth(trigger.width())
+        self._container.setFixedSize(trigger.width(), self._container.sizeHint().height())
+        self.setFixedWidth(trigger.width() + _SHADOW_MARGIN * 2)
+
+    def _get_reveal(self) -> float:
+        return self._reveal
+
+    def _set_reveal(self, value: float) -> None:
+        self._reveal = value
+        menu_h = self._container.height()
+        sel_top = 4 + self._selected_index * _ITEM_HEIGHT
+        sel_bottom = sel_top + _ITEM_HEIGHT
+        top = sel_top * (1.0 - value)
+        bottom = sel_bottom + (menu_h - sel_bottom) * value
+        self.setGeometry(
+            self.x(),
+            int(self._menu_top + top) - _SHADOW_MARGIN,
+            self.width(),
+            int(bottom - top) + _SHADOW_MARGIN * 2,
+        )
+        self._container.move(_SHADOW_MARGIN, _SHADOW_MARGIN - int(top))
+
+    reveal: float = pyqtProperty(float, _get_reveal, _set_reveal)
 
     def show_at(self, trigger: QWidget, current_index: int) -> None:
+        self._selected_index = current_index
         item_offset = current_index * _ITEM_HEIGHT + 4
-        x_offset = trigger.width() - self.width()
-        pos = trigger.mapToGlobal(QPoint(x_offset, -item_offset))
-        self.move(pos)
-        self.show()
-        from core.utils.win32.backdrop import enable_blur
+        x_offset = trigger.width() - self._container.width()
+        pos = trigger.mapToGlobal(QPoint(x_offset - _SHADOW_MARGIN, -item_offset - _SHADOW_MARGIN))
+        self._menu_top = pos.y() + _SHADOW_MARGIN
 
-        enable_blur(int(self.winId()), RoundCorners=True, RoundCornersType="normal", BorderColor="None")
+        self.move(pos)
+        self.setWindowOpacity(0.0)
+        self.reveal = 0.0
+        self.show()
+
+        group = QParallelAnimationGroup(self)
+
+        opacity = QPropertyAnimation(self, b"windowOpacity")
+        opacity.setDuration(_OPEN_MS)
+        opacity.setStartValue(0.0)
+        opacity.setEndValue(1.0)
+        group.addAnimation(opacity)
+
+        unfold = QPropertyAnimation(self, b"reveal")
+        unfold.setDuration(_REVEAL_MS)
+        unfold.setStartValue(0.0)
+        unfold.setEndValue(1.0)
+        unfold.setEasingCurve(QEasingCurve.Type.OutCubic)
+        group.addAnimation(unfold)
+
+        self._anim = group
+        group.start()
+
+    @override
+    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
+        if a0 is not None and not self._container.geometry().contains(a0.pos()):
+            self.close()
+            return
+        super().mousePressEvent(a0)
 
     def _on_item_clicked(self, key: str) -> None:
-        self.itemSelected.emit(key)
         self.close()
+        self.itemSelected.emit(key)
 
 
 # Trigger button
@@ -180,9 +233,12 @@ class _DropDownPopup(QWidget):
 class DropDown(QPushButton):
     currentChanged = pyqtSignal(str)
 
-    def __init__(self, items: list[tuple[str, str]] | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, items: list[tuple[str, str]] | None = None, parent: QWidget | None = None, *, align_selected: bool = True
+    ) -> None:
         super().__init__(parent)
         self._items = items or []
+        self._align_selected = align_selected
         self._current = self._items[0][0] if self._items else ""
         self._popup: _DropDownPopup | None = None
 
@@ -211,7 +267,9 @@ class DropDown(QPushButton):
             self._anim_group.addAnimation(anim)
 
         self.clicked.connect(self._toggle_popup)
-        QApplication.instance().paletteChanged.connect(self._on_theme_changed)
+        app = QApplication.instance()
+        if app:
+            app.paletteChanged.connect(self._on_theme_changed)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
     def _build_states(self, t: dict[str, str]) -> None:
         self._states = {
@@ -237,23 +295,23 @@ class DropDown(QPushButton):
 
     # Animated properties
 
-    @pyqtProperty(QColor)
-    def bg(self) -> QColor:
+    def _get_bg(self) -> QColor:
         return self._bg
 
-    @bg.setter
-    def bg(self, c: QColor) -> None:
+    def _set_bg(self, c: QColor) -> None:
         self._bg = c
         self.update()
 
-    @pyqtProperty(QColor)
-    def border(self) -> QColor:
+    bg: QColor = pyqtProperty(QColor, _get_bg, _set_bg)
+
+    def _get_border(self) -> QColor:
         return self._border
 
-    @border.setter
-    def border(self, c: QColor) -> None:
+    def _set_border(self, c: QColor) -> None:
         self._border = c
         self.update()
+
+    border: QColor = pyqtProperty(QColor, _get_border, _set_border)
 
     def _animate_to(self, state: str) -> None:
         target = self._states.get(state, self._states["normal"])
@@ -264,13 +322,15 @@ class DropDown(QPushButton):
             anim.setEndValue(target[name])
         self._anim_group.start()
 
-    def enterEvent(self, event) -> None:
+    @override
+    def enterEvent(self, event: QEnterEvent | None) -> None:
         self._animate_to("hover")
         super().enterEvent(event)
 
-    def leaveEvent(self, event) -> None:
+    @override
+    def leaveEvent(self, a0: QEvent | None) -> None:
         self._animate_to("normal")
-        super().leaveEvent(event)
+        super().leaveEvent(a0)
 
     def set_current(self, key: str) -> None:
         if key != self._current:
@@ -294,34 +354,35 @@ class DropDown(QPushButton):
             return
         self._popup = _DropDownPopup(self._items, self._current, self._tokens, self)
         self._popup.itemSelected.connect(self._on_popup_selected)
+        self._popup.destroyed.connect(self._on_popup_destroyed)
         current_index = next((i for i, (k, _) in enumerate(self._items) if k == self._current), 0)
-        self._popup.show_at(self, current_index)
+        self._popup.show_at(self, current_index if self._align_selected else 0)
 
     def _on_popup_selected(self, key: str) -> None:
         self.set_current(key)
         self._popup = None
 
-    def paintEvent(self, _event) -> None:
+    def _on_popup_destroyed(self) -> None:
+        self._popup = None
+
+    @override
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.rect().adjusted(1, 1, -1, -1).toRectF()
+        rect = self.rect().toRectF()
 
         # Background
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(self._bg)
         p.drawRoundedRect(rect, _RADIUS, _RADIUS)
 
-        # Border
-        p.setPen(QPen(self._border, 1.0))
+        # Border: light at the top grading to the stronger bottom edge, as Button paints it.
+        grad = QLinearGradient(0, 0, 0, rect.height())
+        grad.setColorAt(0, _resolve(self._tokens, "control_stroke_secondary"))
+        grad.setColorAt(1, self._border)
+        p.setPen(QPen(QBrush(grad), 1.0))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRoundedRect(rect, _RADIUS, _RADIUS)
-
-        # Bottom border
-        p.setPen(QPen(_resolve(self._tokens, "control_stroke_secondary"), 1.0))
-        p.drawLine(
-            QPointF(rect.left() + _RADIUS, rect.bottom()),
-            QPointF(rect.right() - _RADIUS, rect.bottom()),
-        )
+        p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), _RADIUS - 0.5, _RADIUS - 0.5)
 
         # Text (current selection)
         p.setPen(_resolve(self._tokens, "text_primary"))
@@ -342,6 +403,6 @@ class DropDown(QPushButton):
             )
         )
         cx, cy = rect.right() - 16, rect.center().y()
-        p.drawPolyline([QPointF(cx - 3, cy - 0.8), QPointF(cx, cy + 2), QPointF(cx + 3, cy - 0.8)])
+        p.drawPolyline(QPolygonF([QPointF(cx - 3, cy - 0.8), QPointF(cx, cy + 2), QPointF(cx + 3, cy - 0.8)]))
 
         p.end()

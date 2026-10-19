@@ -9,14 +9,18 @@ from typing import Any
 
 from PyQt6.QtCore import QTimer
 
+type NotificationsCallback = Callable[[list[dict[str, Any]]], None]
+
 
 class GitHubDataManager:
     """
     Centralized manager for GitHub API data.
     """
 
+    REQUEST_TIMEOUT = 15
+
     _shared_data: list[dict[str, Any]] = []
-    _callbacks: list[Callable] = []
+    _callbacks: list[NotificationsCallback] = []
     _lock = threading.Lock()
     _timer: QTimer | None = None
     _timer_interval: int = 300000  # Default 5 minutes
@@ -25,6 +29,7 @@ class GitHubDataManager:
     _max_notification: int = 50
     _reason_filters: list[str] | None = None
     _show_comment_count: bool = False
+    _fetch_running: bool = False
 
     @classmethod
     def initialize(
@@ -86,20 +91,24 @@ class GitHubDataManager:
         cls._on_timer()
 
     @classmethod
+    def get_token(cls) -> str | None:
+        return cls._token
+
+    @classmethod
     def set_token(cls, token: str) -> None:
         """Update the token after OAuth and trigger an immediate fetch."""
         cls._token = token
         cls._on_timer()
 
     @classmethod
-    def register_callback(cls, callback: Callable) -> None:
+    def register_callback(cls, callback: NotificationsCallback) -> None:
         """Register a callback to be called when data is updated."""
         with cls._lock:
             if callback not in cls._callbacks:
                 cls._callbacks.append(callback)
 
     @classmethod
-    def unregister_callback(cls, callback: Callable) -> None:
+    def unregister_callback(cls, callback: NotificationsCallback) -> None:
         """Unregister a callback."""
         with cls._lock:
             if callback in cls._callbacks:
@@ -125,6 +134,12 @@ class GitHubDataManager:
         After fetching, calls all registered callbacks with the new data.
         """
 
+        with cls._lock:
+            if cls._fetch_running:
+                logging.debug("GitHubDataManager fetch already in progress, skipping this cycle")
+                return
+            cls._fetch_running = True
+
         def _fetch():
             try:
                 notifications = cls._get_github_notifications(
@@ -149,6 +164,9 @@ class GitHubDataManager:
 
             except Exception as e:
                 logging.error("GitHubDataManager error fetching notifications: %s", e)
+            finally:
+                with cls._lock:
+                    cls._fetch_running = False
 
         threading.Thread(target=_fetch, daemon=True).start()
 
@@ -191,7 +209,7 @@ class GitHubDataManager:
         url = f"https://api.github.com/notifications/threads/{notification_id}"
         req = urllib.request.Request(url, headers=headers, method="PATCH")
         try:
-            with urllib.request.urlopen(req):
+            with urllib.request.urlopen(req, timeout=cls.REQUEST_TIMEOUT):
                 pass
         except urllib.error.HTTPError as e:
             logging.error("GitHubDataManager HTTP error marking notification as read: %s - %s", e.code, e.reason)
@@ -236,7 +254,7 @@ class GitHubDataManager:
                 data = json.dumps({"last_read_at": last_read_at}).encode("utf-8")
                 url = "https://api.github.com/notifications"
                 req = urllib.request.Request(url, headers=headers, data=data, method="PUT")
-                with urllib.request.urlopen(req):
+                with urllib.request.urlopen(req, timeout=cls.REQUEST_TIMEOUT):
                     logging.info("GitHubDataManager marked all notifications as read on GitHub")
             except urllib.error.HTTPError as e:
                 logging.error("GitHubDataManager HTTP error marking all as read: %s - %s", e.code, e.reason)
@@ -259,11 +277,11 @@ class GitHubDataManager:
         """Fetch notifications from GitHub API. Returns [] on any error."""
         try:
             return cls._get_all_notifications(token, only_unread, max_notification, reason_filters, show_comment_count)
-        except urllib.error.URLError:
-            logging.error("GitHubDataManager no internet connection. Unable to fetch notifications.")
-            return []
         except urllib.error.HTTPError as e:
             logging.error("GitHubDataManager HTTP error occurred: %s - %s", e.code, e.reason)
+            return []
+        except urllib.error.URLError:
+            logging.error("GitHubDataManager no internet connection. Unable to fetch notifications.")
             return []
         except Exception as e:
             logging.error("GitHubDataManager an unexpected error occurred: %s", e)
@@ -317,10 +335,10 @@ class GitHubDataManager:
         query_string = "&".join(f"{k}={v}" for k, v in params.items())
         next_url: str | None = f"{url}?{query_string}"
 
-        all_notifications: list[dict] = []
+        all_notifications: list[dict[str, Any]] = []
         while next_url and len(all_notifications) < max_notification:
             req = urllib.request.Request(next_url, headers=headers)
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=cls.REQUEST_TIMEOUT) as response:
                 page = json.loads(response.read().decode())
                 all_notifications.extend(page)
 
@@ -335,7 +353,7 @@ class GitHubDataManager:
         # Trim to requested maximum
         all_notifications = all_notifications[:max_notification]
 
-        result = []
+        result: list[dict[str, Any]] = []
         if all_notifications:
             for notification in all_notifications:
                 # Extract nested values once
@@ -447,7 +465,7 @@ class GitHubDataManager:
         request = urllib.request.Request("https://api.github.com/graphql", data=payload, headers=headers, method="POST")
 
         try:
-            with urllib.request.urlopen(request) as response:
+            with urllib.request.urlopen(request, timeout=cls.REQUEST_TIMEOUT) as response:
                 data = json.loads(response.read().decode())
 
             if data.get("errors"):

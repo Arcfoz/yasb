@@ -1,19 +1,23 @@
+from collections.abc import Callable
 from enum import IntEnum
+from typing import Any, override
 
+import PyQt6.QtCore as QtCore
 from PyQt6.QtCore import (
     QEasingCurve,
     QEvent,
+    QObject,
     QParallelAnimationGroup,
     QPropertyAnimation,
     QRect,
     Qt,
-    pyqtProperty,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter
+from PyQt6.QtGui import QColor, QFont, QKeyEvent, QMouseEvent, QPainter, QPaintEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
@@ -23,7 +27,9 @@ from PyQt6.QtWidgets import (
 
 from core.ui.components.button import Button
 from core.ui.theme import FONT_FAMILIES, get_tokens, theme_key
-from core.utils.win32.backdrop import enable_blur
+
+# pyqtProperty exists at runtime but is missing from the PyQt6 type stubs
+pyqtProperty: Callable[..., Any] = getattr(QtCore, "pyqtProperty")
 
 _MIN_W, _MAX_W = 320, 548
 _MIN_H, _MAX_H = 184, 756
@@ -34,6 +40,13 @@ _OPEN_OPACITY_MS = 167
 _OPEN_SLIDE_MS = 250
 _CLOSE_MS = 83
 _SLIDE_OFFSET = 10
+
+_RADIUS = 8
+_BORDER = 1
+_SHADOW_MARGIN = 24
+_SHADOW_BLUR = 28
+_SHADOW_DY = 6
+_SHADOW_ALPHA = 110
 
 
 class ContentDialogResult(IntEnum):
@@ -49,7 +62,7 @@ class ContentDialogButton(IntEnum):
     CLOSE = 3
 
 
-class _SmokeLayer(QWidget):
+class SmokeLayer(QWidget):
     """Semi-transparent overlay on the parent."""
 
     clicked = pyqtSignal()
@@ -58,28 +71,31 @@ class _SmokeLayer(QWidget):
         super().__init__(parent)
         self._opacity = 0.0
 
-    @pyqtProperty(float)
-    def smoke_opacity(self) -> float:
+    def _get_smoke_opacity(self) -> float:
         return self._opacity
 
-    @smoke_opacity.setter
-    def smoke_opacity(self, value: float) -> None:
+    def _set_smoke_opacity(self, value: float) -> None:
         self._opacity = value
         self.update()
 
-    def paintEvent(self, _event) -> None:
+    smoke_opacity: float = pyqtProperty(float, _get_smoke_opacity, _set_smoke_opacity)
+
+    @override
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
         if self._opacity > 0:
             painter = QPainter(self)
             painter.fillRect(self.rect(), QColor(0, 0, 0, int(76 * self._opacity)))
             painter.end()
 
-    def mousePressEvent(self, event) -> None:
+    @override
+    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
         self.clicked.emit()
-        event.accept()
+        if a0 is not None:
+            a0.accept()
 
 
 class ContentDialog(QWidget):
-    """ContentDialog using DWM blur for shadow and rounded corners.
+    """ContentDialog with a Qt-drawn shadow, border and rounded corners.
 
     Usage::
 
@@ -121,7 +137,7 @@ class ContentDialog(QWidget):
         self._default_button = default_button
         self._is_closing = False
         self._host = parent
-        self._smoke: _SmokeLayer | None = None
+        self._smoke: SmokeLayer | None = None
         self._natural_w = _MIN_W
         self._natural_h = _MIN_H
         self._center_y = 0
@@ -131,15 +147,21 @@ class ContentDialog(QWidget):
 
         # Root layout
         root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setContentsMargins(_SHADOW_MARGIN, _SHADOW_MARGIN, _SHADOW_MARGIN, _SHADOW_MARGIN)
         root_layout.setSpacing(0)
 
         self._container = QWidget(self)
         self._container.setObjectName("cd_bg")
+        self._container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(_SHADOW_BLUR)
+        self._shadow.setOffset(0, _SHADOW_DY)
+        self._shadow.setColor(QColor(0, 0, 0, _SHADOW_ALPHA))
+        self._container.setGraphicsEffect(self._shadow)
         root_layout.addWidget(self._container)
 
         container_layout = QVBoxLayout(self._container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setContentsMargins(_BORDER, _BORDER, _BORDER, _BORDER)
         container_layout.setSpacing(0)
 
         # Top section (title + body)
@@ -209,13 +231,15 @@ class ContentDialog(QWidget):
         self._btn_bar.setVisible(bool(primary_button_text or secondary_button_text or close_button_text))
         container_layout.addWidget(self._btn_bar, 0)
 
-        self.setMinimumSize(_MIN_W, _MIN_H)
-        self.setMaximumSize(_MAX_W, _MAX_H)
+        self.setMinimumSize(_MIN_W + _SHADOW_MARGIN * 2, _MIN_H + _SHADOW_MARGIN * 2)
+        self.setMaximumSize(_MAX_W + _SHADOW_MARGIN * 2, _MAX_H + _SHADOW_MARGIN * 2)
         self._container.setMinimumSize(_MIN_W, _MIN_H)
         self._container.setMaximumSize(_MAX_W, _MAX_H)
 
         self._apply_styles()
-        QApplication.instance().paletteChanged.connect(self._on_theme_changed)
+        app = QApplication.instance()
+        if app:
+            app.paletteChanged.connect(self._on_theme_changed)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
     def set_title(self, text: str) -> None:
         self._title_label.setText(text)
@@ -260,7 +284,7 @@ class ContentDialog(QWidget):
         self._natural_w = min(max(unwrapped_hint.width(), _MIN_W), _MAX_W)
 
         # Height: measure wrapped text with QFontMetrics.boundingRect
-        label_w = self._natural_w - _PAD * 2
+        label_w = self._natural_w - _PAD * 2 - _BORDER * 2
         wrap_flags = Qt.TextFlag.TextWordWrap
         top_h = _PAD
         if self._title_label.text():
@@ -275,15 +299,15 @@ class ContentDialog(QWidget):
             top_h += content_rect.height()
         top_h += _PAD
         btn_h = self._btn_bar.sizeHint().height()
-        self._natural_h = min(max(top_h + btn_h, _MIN_H), _MAX_H)
+        self._natural_h = min(max(top_h + btn_h + _BORDER * 2, _MIN_H), _MAX_H)
 
-        self.setFixedSize(self._natural_w, self._natural_h)
+        self.setFixedSize(self._natural_w + _SHADOW_MARGIN * 2, self._natural_h + _SHADOW_MARGIN * 2)
         self._container.setFixedSize(self._natural_w, self._natural_h)
 
     def show_dialog(self) -> None:
         parent = self._host
 
-        self._smoke = _SmokeLayer(parent)
+        self._smoke = SmokeLayer(parent)
         self._smoke.setGeometry(parent.rect())
         self._smoke.show()
         self._smoke.raise_()
@@ -291,14 +315,6 @@ class ContentDialog(QWidget):
 
         self._compute_size()
         self._position_center(0)
-
-        enable_blur(
-            int(self.winId()),
-            DarkMode=True,
-            RoundCorners=True,
-            RoundCornersType="normal",
-            BorderColor="system",
-        )
 
         self.show()
         self.activateWindow()
@@ -310,30 +326,29 @@ class ContentDialog(QWidget):
         self._is_closing = True
         self._play_close()
 
-    @pyqtProperty(int)
-    def slide_offset(self) -> int:
+    def _get_slide_offset(self) -> int:
         return self._slide_offset_val
 
-    @slide_offset.setter
-    def slide_offset(self, value: int) -> None:
+    def _set_slide_offset(self, value: int) -> None:
         self._slide_offset_val = value
         self._position_center(value)
 
-    def _position_center(self, y_offset: int = 0) -> None:
-        if self._host is None:
-            return
-        centre = self._host.mapToGlobal(self._host.rect().center())
-        x = centre.x() - self._natural_w // 2
-        y = centre.y() - self._natural_h // 2 + y_offset
-        self.move(x, y)
-        self._center_y = centre.y() - self._natural_h // 2
+    slide_offset: int = pyqtProperty(int, _get_slide_offset, _set_slide_offset)
 
-    def eventFilter(self, obj, event) -> bool:
-        if obj is self._host and event.type() == QEvent.Type.Resize:
-            if self._smoke:
+    def _position_center(self, y_offset: int = 0) -> None:
+        centre = self._host.mapToGlobal(self._host.rect().center())
+        x = centre.x() - self.width() // 2
+        y = centre.y() - self.height() // 2 + y_offset
+        self.move(x, y)
+        self._center_y = centre.y() - self.height() // 2
+
+    @override
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
+        if a0 is self._host and a1 is not None and a1.type() in (QEvent.Type.Resize, QEvent.Type.Move):
+            if self._smoke and a1.type() == QEvent.Type.Resize:
                 self._smoke.setGeometry(self._host.rect())
             self._position_center(0)
-        return super().eventFilter(obj, event)
+        return super().eventFilter(a0, a1)
 
     def _play_open(self) -> None:
         group = QParallelAnimationGroup(self)
@@ -406,10 +421,13 @@ class ContentDialog(QWidget):
         self.close_button_click.emit()
         self.hide_dialog()
 
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_Escape:
+    @override
+    def keyPressEvent(self, a0: QKeyEvent | None) -> None:
+        if a0 is None:
+            return
+        if a0.key() == Qt.Key.Key_Escape:
             self._on_close()
-        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        elif a0.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             match self._default_button:
                 case ContentDialogButton.PRIMARY if self._primary_btn:
                     self._on_primary()
@@ -417,8 +435,10 @@ class ContentDialog(QWidget):
                     self._on_secondary()
                 case ContentDialogButton.CLOSE if self._close_btn:
                     self._on_close()
+                case _:
+                    pass
         else:
-            super().keyPressEvent(event)
+            super().keyPressEvent(a0)
 
     def _on_theme_changed(self) -> None:
         key = theme_key()
@@ -430,10 +450,19 @@ class ContentDialog(QWidget):
     def _apply_styles(self) -> None:
         tokens = get_tokens()
         bg = tokens["solid_bg_base"]
-        self._container.setStyleSheet(f"#cd_bg {{ background: {bg} }}")
-        self._top.setStyleSheet(
-            f"#cd_top {{ background: {tokens['layer_alt']}; border-bottom: 1px solid {tokens['card_stroke_default']}; }}"
+        stroke = tokens["surface_stroke_default_solid"]
+        inner_radius = _RADIUS - _BORDER
+        self._container.setStyleSheet(
+            f"#cd_bg {{ background: {bg}; border: {_BORDER}px solid {stroke}; border-radius: {_RADIUS}px; }}"
         )
-        self._btn_bar.setStyleSheet(f"#cd_btns {{ background: {bg}; }}")
+        self._top.setStyleSheet(
+            f"#cd_top {{ background: {tokens['layer_alt']};"
+            f" border-bottom: 1px solid {tokens['card_stroke_default']};"
+            f" border-top-left-radius: {inner_radius}px; border-top-right-radius: {inner_radius}px; }}"
+        )
+        self._btn_bar.setStyleSheet(
+            f"#cd_btns {{ background: {bg};"
+            f" border-bottom-left-radius: {inner_radius}px; border-bottom-right-radius: {inner_radius}px; }}"
+        )
         self._title_label.setStyleSheet(f"color: {tokens['text_primary']}")
         self._content_label.setStyleSheet(f"color: {tokens['text_primary']}")

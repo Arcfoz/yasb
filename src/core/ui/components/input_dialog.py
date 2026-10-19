@@ -1,13 +1,21 @@
+from collections.abc import Callable
+from typing import Any, override
+
+import PyQt6.QtCore as QtCore
 from PyQt6.QtCore import (
     QEasingCurve,
+    QEvent,
+    QObject,
+    QParallelAnimationGroup,
     QPropertyAnimation,
     Qt,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPen
+from PyQt6.QtGui import QColor, QFocusEvent, QFont, QKeyEvent, QPainter, QPaintEvent, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -17,16 +25,27 @@ from PyQt6.QtWidgets import (
 )
 
 from core.ui.components.button import Button
+from core.ui.components.content_dialog import SmokeLayer
 from core.ui.theme import FONT_FAMILIES, get_tokens, theme_key
-from core.utils.win32.backdrop import enable_blur
 
-_WIDTH = 360
+# pyqtProperty exists at runtime but is missing from the PyQt6 type stubs
+pyqtProperty: Callable[..., Any] = getattr(QtCore, "pyqtProperty")
+
+_MIN_W, _MAX_W = 360, 548
 _PAD = 24
 _BTN_SPACING = 8
 _TITLE_MB = 12
 _OPEN_MS = 167
+_OPEN_SLIDE_MS = 250
 _CLOSE_MS = 83
+_SLIDE_OFFSET = 10
 _FOCUS_LINE_H = 2
+_RADIUS = 8
+_BORDER = 1
+_SHADOW_MARGIN = 24
+_SHADOW_BLUR = 28
+_SHADOW_DY = 6
+_SHADOW_ALPHA = 110
 
 
 class _FocusLineEdit(QLineEdit):
@@ -50,18 +69,21 @@ class _FocusLineEdit(QLineEdit):
         self._accent_color = QColor(color)
         self.update()
 
-    def focusInEvent(self, event) -> None:
-        super().focusInEvent(event)
+    @override
+    def focusInEvent(self, a0: QFocusEvent | None) -> None:
+        super().focusInEvent(a0)
         self._focused = True
         self.update()
 
-    def focusOutEvent(self, event) -> None:
-        super().focusOutEvent(event)
+    @override
+    def focusOutEvent(self, a0: QFocusEvent | None) -> None:
+        super().focusOutEvent(a0)
         self._focused = False
         self.update()
 
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
+    @override
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        super().paintEvent(a0)
         if not self._focused:
             return
         painter = QPainter(self)
@@ -75,14 +97,15 @@ class _FocusLineEdit(QLineEdit):
 
 
 class InputDialog(QWidget):
-    """Standalone input dialog using the UI design system.
+    """Input dialog using the UI design system.
 
-    Appears as a top-level window at the cursor position with DWM blur
-    and rounded corners. No smoke overlay.
+    Centres on its parent window behind a smoke overlay, with the same open and close
+    animation as ContentDialog. A parent is required; the dialog belongs to a window.
 
     Usage::
 
         dlg = InputDialog(
+            parent=self,
             title="Rename",
             content="Enter a new name.",
             text="current value",
@@ -104,32 +127,42 @@ class InputDialog(QWidget):
         placeholder: str = "",
         primary_button_text: str = "OK",
         close_button_text: str = "Cancel",
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(
-            None,
+            parent,
             Qt.WindowType.Tool
             | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.NoDropShadowWindowHint
             | Qt.WindowType.WindowStaysOnTopHint,
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._host = parent
+        self._smoke: SmokeLayer | None = None
+        self._slide_offset_val = 0
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowOpacity(0.0)
         self._is_closing = False
         self._theme_key = theme_key()
-        self._anim: QPropertyAnimation | None = None
+        self._anim: QParallelAnimationGroup | None = None
 
         # Root layout
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(_SHADOW_MARGIN, _SHADOW_MARGIN, _SHADOW_MARGIN, _SHADOW_MARGIN)
         root.setSpacing(0)
 
         self._container = QWidget(self)
         self._container.setObjectName("id_bg")
+        self._container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(_SHADOW_BLUR)
+        self._shadow.setOffset(0, _SHADOW_DY)
+        self._shadow.setColor(QColor(0, 0, 0, _SHADOW_ALPHA))
+        self._container.setGraphicsEffect(self._shadow)
         root.addWidget(self._container)
 
         layout = QVBoxLayout(self._container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(_BORDER, _BORDER, _BORDER, _BORDER)
         layout.setSpacing(0)
 
         # Top section (title + content + input)
@@ -196,11 +229,10 @@ class InputDialog(QWidget):
 
         layout.addWidget(self._btn_bar)
 
-        self.setFixedWidth(_WIDTH)
-        self._container.setFixedWidth(_WIDTH)
-
         self._apply_styles()
-        QApplication.instance().paletteChanged.connect(self._on_theme_changed)
+        app = QApplication.instance()
+        if app:
+            app.paletteChanged.connect(self._on_theme_changed)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
     @property
     def text(self) -> str:
@@ -210,28 +242,34 @@ class InputDialog(QWidget):
     def input_widget(self) -> _FocusLineEdit:
         return self._input
 
-    def show_dialog(self) -> None:
-        self.adjustSize()
+    def _compute_size(self) -> None:
+        """Width from the unwrapped text, clamped; height from the layout once that width is set."""
+        self._title_label.setWordWrap(False)
+        self._content_label.setWordWrap(False)
+        natural_w = self._container.sizeHint().width()
+        self._title_label.setWordWrap(True)
+        self._content_label.setWordWrap(True)
+
+        width = min(max(natural_w, _MIN_W), _MAX_W)
+        self._container.setFixedWidth(width)
+        self.setFixedWidth(width + _SHADOW_MARGIN * 2)
         self._container.adjustSize()
-        pos = QCursor.pos()
-        x = pos.x() - _WIDTH // 2
-        y = pos.y() - self.height() // 2
+        self.adjustSize()
 
-        screen = QApplication.screenAt(pos)
-        if screen is not None:
-            geo = screen.availableGeometry()
-            x = max(geo.x(), min(x, geo.x() + geo.width() - self.width()))
-            y = max(geo.y(), min(y, geo.y() + geo.height() - self.height()))
+    def show_dialog(self) -> None:
+        self._compute_size()
 
-        self.move(x, y)
+        host = self._host
+        if host is None:
+            return
 
-        enable_blur(
-            int(self.winId()),
-            DarkMode=True,
-            RoundCorners=True,
-            RoundCornersType="normal",
-            BorderColor="system",
-        )
+        self._smoke = SmokeLayer(host)
+        self._smoke.setGeometry(host.rect())
+        self._smoke.show()
+        self._smoke.raise_()
+        host.installEventFilter(self)
+
+        self._position_center(0)
 
         self.show()
         self.activateWindow()
@@ -244,45 +282,103 @@ class InputDialog(QWidget):
         self._is_closing = True
         self._play_close()
 
+    def _get_slide_offset(self) -> int:
+        return self._slide_offset_val
+
+    def _set_slide_offset(self, value: int) -> None:
+        self._slide_offset_val = value
+        self._position_center(value)
+
+    slide_offset: int = pyqtProperty(int, _get_slide_offset, _set_slide_offset)
+
+    def _position_center(self, y_offset: int = 0) -> None:
+        if self._host is None:
+            return
+        centre = self._host.mapToGlobal(self._host.rect().center())
+        self.move(centre.x() - self.width() // 2, centre.y() - self.height() // 2 + y_offset)
+
+    @override
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
+        host = self._host
+        if host is not None and a0 is host and a1 is not None and a1.type() in (QEvent.Type.Resize, QEvent.Type.Move):
+            if self._smoke and a1.type() == QEvent.Type.Resize:
+                self._smoke.setGeometry(host.rect())
+            self._position_center(0)
+        return super().eventFilter(a0, a1)
+
     def _play_open(self) -> None:
-        anim = QPropertyAnimation(self, b"windowOpacity")
-        anim.setDuration(_OPEN_MS)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._anim = anim
-        anim.start()
+        group = QParallelAnimationGroup(self)
+
+        opacity = QPropertyAnimation(self, b"windowOpacity")
+        opacity.setDuration(_OPEN_MS)
+        opacity.setStartValue(0.0)
+        opacity.setEndValue(1.0)
+        opacity.setEasingCurve(QEasingCurve.Type.OutCubic)
+        group.addAnimation(opacity)
+
+        slide = QPropertyAnimation(self, b"slide_offset")
+        slide.setDuration(_OPEN_SLIDE_MS)
+        slide.setStartValue(_SLIDE_OFFSET)
+        slide.setEndValue(0)
+        slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        group.addAnimation(slide)
+
+        smoke = QPropertyAnimation(self._smoke, b"smoke_opacity")
+        smoke.setDuration(_OPEN_MS)
+        smoke.setStartValue(0.0)
+        smoke.setEndValue(1.0)
+        group.addAnimation(smoke)
+
+        self._anim = group
+        group.start()
 
     def _play_close(self) -> None:
-        anim = QPropertyAnimation(self, b"windowOpacity")
-        anim.setDuration(_CLOSE_MS)
-        anim.setStartValue(1.0)
-        anim.setEndValue(0.0)
-        anim.finished.connect(self._on_close_finished)
-        self._anim = anim
-        anim.start()
+        group = QParallelAnimationGroup(self)
+
+        opacity = QPropertyAnimation(self, b"windowOpacity")
+        opacity.setDuration(_CLOSE_MS)
+        opacity.setStartValue(1.0)
+        opacity.setEndValue(0.0)
+        group.addAnimation(opacity)
+
+        smoke = QPropertyAnimation(self._smoke, b"smoke_opacity")
+        smoke.setDuration(_CLOSE_MS)
+        smoke.setStartValue(1.0)
+        smoke.setEndValue(0.0)
+        group.addAnimation(smoke)
+
+        group.finished.connect(self._on_close_finished)
+        self._anim = group
+        group.start()
 
     def _on_close_finished(self) -> None:
+        if self._host is not None:
+            self._host.removeEventFilter(self)
+        if self._smoke is not None:
+            self._smoke.hide()
+            self._smoke.setParent(None)
+            self._smoke = None
         self.hide()
         self.close()
 
     def _on_primary(self) -> None:
-        value = self._input.text().strip()
-        if value:
-            self.accepted.emit(value)
+        self.accepted.emit(self._input.text().strip())
         self.hide_dialog()
 
     def _on_close(self) -> None:
         self.rejected.emit()
         self.hide_dialog()
 
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_Escape:
+    @override
+    def keyPressEvent(self, a0: QKeyEvent | None) -> None:
+        if a0 is None:
+            return
+        if a0.key() == Qt.Key.Key_Escape:
             self._on_close()
-        elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        elif a0.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._on_primary()
         else:
-            super().keyPressEvent(event)
+            super().keyPressEvent(a0)
 
     def _on_theme_changed(self) -> None:
         key = theme_key()
@@ -294,12 +390,20 @@ class InputDialog(QWidget):
     def _apply_styles(self) -> None:
         tokens = get_tokens()
         bg = tokens["solid_bg_base"]
-        self._container.setStyleSheet(f"#id_bg {{ background: {bg} }}")
+        stroke = tokens["surface_stroke_default_solid"]
+        inner_radius = _RADIUS - _BORDER
+        self._container.setStyleSheet(
+            f"#id_bg {{ background: {bg}; border: {_BORDER}px solid {stroke}; border-radius: {_RADIUS}px; }}"
+        )
         self._top.setStyleSheet(
             f"#id_top {{ background: {tokens['layer_alt']};"
-            f" border-bottom: 1px solid {tokens['card_stroke_default']}; }}"
+            f" border-bottom: 1px solid {tokens['card_stroke_default']};"
+            f" border-top-left-radius: {inner_radius}px; border-top-right-radius: {inner_radius}px; }}"
         )
-        self._btn_bar.setStyleSheet(f"#id_btns {{ background: {bg}; }}")
+        self._btn_bar.setStyleSheet(
+            f"#id_btns {{ background: {bg};"
+            f" border-bottom-left-radius: {inner_radius}px; border-bottom-right-radius: {inner_radius}px; }}"
+        )
         self._title_label.setStyleSheet(f"color: {tokens['text_primary']}")
         self._content_label.setStyleSheet(f"color: {tokens['text_secondary']}")
         self._input.setStyleSheet(
